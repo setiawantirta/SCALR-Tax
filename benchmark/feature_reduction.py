@@ -458,10 +458,8 @@ class SimplifiedBenchmark:
                 )
     
     def find_optimal_components(self, X, y, method):
-        """Find optimal components dengan memory management"""
+        """Find optimal components dengan ITERATIVE SEARCH"""
         MemoryManager.log_memory("Before component optimization")
-        
-        n_comp = self.config.start_components
         
         # Auto-calculate batch size if not provided
         if self.config.batch_size is None:
@@ -471,48 +469,118 @@ class SimplifiedBenchmark:
             batch_size = self.config.batch_size
         
         if method == 'ipca':
-            model = IncrementalPCA(n_components=n_comp)
+            print(f"🔍 Searching optimal components (threshold={self.config.cev_threshold})...")
             
-            # Incremental fitting dengan progress bar
+            # 👇 ITERATIVE SEARCH: Start → Max dengan step
+            current_n = self.config.start_components
+            optimal_n = current_n
+            best_cev = 0.0
+            
+            while current_n <= self.config.max_components:
+                print(f"\n   Testing n_components = {current_n}...")
+                
+                # Fit model dengan current_n komponen
+                model = IncrementalPCA(n_components=current_n)
+                
+                # Incremental fitting
+                n_batches = int(np.ceil(X.shape[0] / batch_size))
+                pbar = tqdm(total=n_batches, desc=f"Fitting {current_n} components", leave=False)
+                
+                for i in range(0, X.shape[0], batch_size):
+                    self._check_memory_emergency()
+                    batch = X[i:i+batch_size].toarray()
+                    model.partial_fit(batch)
+                    del batch
+                    MemoryManager.force_gc()
+                    pbar.update(1)
+                pbar.close()
+                
+                # Calculate CEV
+                variance_ratio = model.explained_variance_ratio_
+                cev = np.cumsum(variance_ratio)
+                best_cev = cev[-1]  # Last value = total CEV
+                
+                print(f"      CEV achieved: {best_cev:.4f}")
+                
+                # 👇 CHECK IF THRESHOLD REACHED
+                if best_cev >= self.config.cev_threshold:
+                    # Find exact component where threshold was reached
+                    optimal_n = np.argmax(cev >= self.config.cev_threshold) + 1
+                    print(f"   ✅ Threshold reached at component {optimal_n}")
+                    print(f"      Final CEV: {cev[optimal_n-1]:.4f}")
+                    break
+                
+                # 👇 INCREASE n_components by step
+                current_n += self.config.step_components
+                
+                # If reached max without hitting threshold
+                if current_n > self.config.max_components:
+                    optimal_n = self.config.max_components
+                    print(f"   ⚠️  Reached max_components ({self.config.max_components})")
+                    print(f"      Best CEV achieved: {best_cev:.4f} (target: {self.config.cev_threshold})")
+                    break
+            
+            # Re-fit dengan optimal_n untuk mendapatkan variance_ratio yang sesuai
+            print(f"\n🔧 Final fit with {optimal_n} components...")
+            model = IncrementalPCA(n_components=optimal_n)
+            
             n_batches = int(np.ceil(X.shape[0] / batch_size))
-            pbar = tqdm(total=n_batches, desc="Fitting IncrementalPCA")
+            pbar = tqdm(total=n_batches, desc="Final fitting")
             
             for i in range(0, X.shape[0], batch_size):
                 self._check_memory_emergency()
-                
                 batch = X[i:i+batch_size].toarray()
                 model.partial_fit(batch)
-                
-                # Clean up
                 del batch
                 MemoryManager.force_gc()
                 pbar.update(1)
-            
             pbar.close()
+            
             variance_ratio = model.explained_variance_ratio_
-            cev = np.cumsum(variance_ratio)
             
         elif method == 'svd':
-            # SVD tidak bisa incremental, tapi bisa sparse
+            # SVD logic (unchanged)
             print("⚠️  SVD uses full matrix, checking memory...")
             dense_size = MemoryManager.estimate_dense_memory(X)
             
             if dense_size > self.config.max_memory_gb * 2:
                 print(f"⚠️  WARNING: Data might be too large for SVD")
-                print(f"   Consider using IPCA instead or reducing n_components")
             
-            model = TruncatedSVD(n_components=n_comp)
+            # Start dengan start_components
+            current_n = self.config.start_components
+            optimal_n = current_n
+            
+            while current_n <= self.config.max_components:
+                print(f"\n   Testing n_components = {current_n}...")
+                
+                model = TruncatedSVD(n_components=current_n)
+                model.fit(X)
+                
+                variance_ratio = model.explained_variance_ratio_
+                cev = np.cumsum(variance_ratio)
+                best_cev = cev[-1]
+                
+                print(f"      CEV achieved: {best_cev:.4f}")
+                
+                if best_cev >= self.config.cev_threshold:
+                    optimal_n = np.argmax(cev >= self.config.cev_threshold) + 1
+                    print(f"   ✅ Threshold reached at component {optimal_n}")
+                    break
+                
+                current_n += self.config.step_components
+                
+                if current_n > self.config.max_components:
+                    optimal_n = self.config.max_components
+                    print(f"   ⚠️  Reached max_components")
+                    break
+            
+            # Re-fit dengan optimal_n
+            model = TruncatedSVD(n_components=optimal_n)
             model.fit(X)
             variance_ratio = model.explained_variance_ratio_
-            cev = np.cumsum(variance_ratio)
         
         else:
-            return n_comp, None
-        
-        if np.any(cev >= self.config.cev_threshold):
-            optimal_n = np.argmax(cev >= self.config.cev_threshold) + 1
-        else:
-            optimal_n = n_comp
+            return self.config.start_components, None
         
         MemoryManager.log_memory("After component optimization")
         MemoryManager.force_gc()
