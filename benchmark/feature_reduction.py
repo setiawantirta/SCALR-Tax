@@ -210,7 +210,7 @@ class DataLoader:
         return X, y
 
 # =================================================================
-# 3. PLOTTING MANAGER WITH MEMORY SAFETY
+# 3. PLOTTING MANAGER WITH MEMORY SAFETY - ENHANCED
 # =================================================================
 
 class PlottingManager:
@@ -262,6 +262,303 @@ class PlottingManager:
             print(f"⚠️  Failed to create variance plot: {e}")
             plt.close('all')
             return None
+    
+    def plot_pca_feature_space_all_labels(self, X_transformed, y, level, kmer, method, output_dir, split='train'):
+        """
+        🎨 Plot PCA/Feature Space dengan SEMUA LABEL
+        Enhanced plot dengan legend untuk semua kelas
+        """
+        try:
+            if X_transformed.shape[1] < 2:
+                print(f"⚠️  Need at least 2 components for 2D plot")
+                return None
+            
+            # Safe sampling untuk performance
+            X_plot, y_plot = self._safe_sample(X_transformed, y)
+            
+            # Get unique classes and sort
+            unique_classes = np.unique(y_plot)
+            n_classes = len(unique_classes)
+            
+            print(f"   📊 Plotting {len(X_plot)} samples with {n_classes} classes...")
+            
+            # Create figure dengan ukuran dinamis berdasarkan jumlah kelas
+            if n_classes <= 10:
+                figsize = (14, 10)
+            elif n_classes <= 20:
+                figsize = (16, 12)
+            else:
+                figsize = (18, 14)
+            
+            fig, ax = plt.subplots(figsize=figsize)
+            
+            # Generate colors untuk semua kelas
+            if n_classes <= 10:
+                colors = plt.cm.tab10(np.linspace(0, 1, 10))
+            elif n_classes <= 20:
+                colors = plt.cm.tab20(np.linspace(0, 1, 20))
+            else:
+                # Untuk banyak kelas, gunakan colormap kontinyu
+                colors = plt.cm.rainbow(np.linspace(0, 1, n_classes))
+            
+            # Plot setiap kelas dengan warna berbeda
+            for idx, cls in enumerate(unique_classes):
+                mask = y_plot == cls
+                n_samples_class = np.sum(mask)
+                
+                ax.scatter(
+                    X_plot[mask, 0], 
+                    X_plot[mask, 1],
+                    c=[colors[idx % len(colors)]], 
+                    label=f'Class {cls} (n={n_samples_class})',
+                    alpha=0.6, 
+                    s=30,
+                    edgecolors='black',
+                    linewidth=0.3
+                )
+            
+            # Styling
+            ax.set_xlabel('Principal Component 1', fontsize=13, fontweight='bold')
+            ax.set_ylabel('Principal Component 2', fontsize=13, fontweight='bold')
+            
+            title = (f'PCA Feature Space - {level.upper()} K{kmer} ({method.upper()}) [{split.upper()}]\n'
+                    f'{len(X_plot):,} samples | {n_classes} classes | {X_transformed.shape[1]} components')
+            ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+            
+            # Legend configuration
+            if n_classes <= 30:
+                # Small number of classes: show all in legend
+                ax.legend(
+                    loc='center left', 
+                    bbox_to_anchor=(1, 0.5),
+                    fontsize=9,
+                    frameon=True,
+                    fancybox=True,
+                    shadow=True,
+                    ncol=1 if n_classes <= 20 else 2
+                )
+            else:
+                # Too many classes: show colorbar instead
+                from matplotlib.colors import Normalize
+                from matplotlib.cm import ScalarMappable
+                
+                norm = Normalize(vmin=unique_classes.min(), vmax=unique_classes.max())
+                sm = ScalarMappable(cmap=plt.cm.rainbow, norm=norm)
+                sm.set_array([])
+                
+                cbar = plt.colorbar(sm, ax=ax, pad=0.02)
+                cbar.set_label('Class Label', fontsize=11, fontweight='bold')
+                
+                # Add text info
+                ax.text(1.02, 0.98, f'{n_classes} classes', 
+                       transform=ax.transAxes, 
+                       fontsize=10, 
+                       verticalalignment='top',
+                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+            
+            ax.grid(True, alpha=0.3, linestyle='--')
+            
+            # Save dengan nama yang jelas
+            filename = f"pca_feature_space_all_labels_{split}.{self.plot_format}"
+            filepath = output_dir / filename
+            plt.savefig(filepath, dpi=self.dpi, bbox_inches='tight')
+            plt.close()
+            
+            print(f"   ✅ PCA feature space plot saved: {filename}")
+            
+            MemoryManager.force_gc()
+            return str(filepath)
+            
+        except Exception as e:
+            print(f"⚠️  Failed to create PCA feature space plot: {e}")
+            import traceback
+            traceback.print_exc()
+            plt.close('all')
+            return None
+    
+    def plot_pca_feature_space_3d(self, X_transformed, y, level, kmer, method, output_dir, split='train'):
+        """
+        🎨 Plot PCA/Feature Space 3D dengan SEMUA LABEL (bonus)
+        """
+        try:
+            if X_transformed.shape[1] < 3:
+                print(f"⚠️  Need at least 3 components for 3D plot")
+                return None
+            
+            # Safe sampling
+            X_plot, y_plot = self._safe_sample(X_transformed, y, max_samples=3000)  # Limit for 3D
+            
+            unique_classes = np.unique(y_plot)
+            n_classes = len(unique_classes)
+            
+            print(f"   📊 Creating 3D plot with {len(X_plot)} samples and {n_classes} classes...")
+            
+            # Create 3D figure
+            from mpl_toolkits.mplot3d import Axes3D
+            fig = plt.figure(figsize=(16, 12))
+            ax = fig.add_subplot(111, projection='3d')
+            
+            # Generate colors
+            if n_classes <= 20:
+                colors = plt.cm.tab20(np.linspace(0, 1, 20))
+            else:
+                colors = plt.cm.rainbow(np.linspace(0, 1, n_classes))
+            
+            # Plot each class
+            for idx, cls in enumerate(unique_classes):
+                mask = y_plot == cls
+                n_samples_class = np.sum(mask)
+                
+                ax.scatter(
+                    X_plot[mask, 0], 
+                    X_plot[mask, 1],
+                    X_plot[mask, 2],
+                    c=[colors[idx % len(colors)]], 
+                    label=f'Class {cls} (n={n_samples_class})',
+                    alpha=0.6,
+                    s=20,
+                    edgecolors='black',
+                    linewidth=0.2
+                )
+            
+            # Styling
+            ax.set_xlabel('PC1', fontsize=12, fontweight='bold', labelpad=10)
+            ax.set_ylabel('PC2', fontsize=12, fontweight='bold', labelpad=10)
+            ax.set_zlabel('PC3', fontsize=12, fontweight='bold', labelpad=10)
+            
+            title = (f'3D PCA Feature Space - {level.upper()} K{kmer} ({method.upper()}) [{split.upper()}]\n'
+                    f'{len(X_plot):,} samples | {n_classes} classes')
+            ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+            
+            # Legend
+            if n_classes <= 20:
+                ax.legend(loc='upper left', bbox_to_anchor=(1.05, 1), fontsize=8)
+            
+            # Save
+            filename = f"pca_feature_space_3d_{split}.{self.plot_format}"
+            filepath = output_dir / filename
+            plt.savefig(filepath, dpi=self.dpi, bbox_inches='tight')
+            plt.close()
+            
+            print(f"   ✅ 3D PCA feature space plot saved: {filename}")
+            
+            MemoryManager.force_gc()
+            return str(filepath)
+            
+        except Exception as e:
+            print(f"⚠️  Failed to create 3D PCA plot: {e}")
+            plt.close('all')
+            return None
+    
+    def plot_component_distribution(self, X_transformed, level, kmer, method, output_dir):
+        """Plot distribution dengan memory safety"""
+        try:
+            n_comp_to_plot = min(5, X_transformed.shape[1])
+            
+            # Safe sampling
+            X_plot, _ = self._safe_sample(X_transformed, np.zeros(len(X_transformed)))
+            
+            fig, axes = plt.subplots(1, n_comp_to_plot, figsize=(4*n_comp_to_plot, 4))
+            if n_comp_to_plot == 1:
+                axes = [axes]
+            
+            for i in range(n_comp_to_plot):
+                axes[i].hist(X_plot[:, i], bins=50, alpha=0.7, edgecolor='black')
+                axes[i].set_xlabel(f'Component {i+1}', fontsize=10)
+                axes[i].set_ylabel('Frequency', fontsize=10)
+                axes[i].set_title(f'PC{i+1} Distribution', fontsize=11)
+                axes[i].grid(True, alpha=0.3)
+            
+            fig.suptitle(f'Component Distributions - {level.upper()} K{kmer} ({method.upper()})', 
+                         fontsize=14, fontweight='bold', y=1.02)
+            plt.tight_layout()
+            
+            filename = f"component_distributions.{self.plot_format}"
+            filepath = output_dir / filename
+            plt.savefig(filepath, dpi=self.dpi, bbox_inches='tight')
+            plt.close()
+            
+            MemoryManager.force_gc()
+            return str(filepath)
+        except Exception as e:
+            print(f"⚠️  Failed to create distribution plot: {e}")
+            plt.close('all')
+            return None
+    
+    def plot_class_separation_heatmap(self, X_transformed, y, level, kmer, method, output_dir, split='train'):
+        """
+        🎨 Plot heatmap of class separation (pairwise distances)
+        """
+        try:
+            from scipy.spatial.distance import cdist
+            
+            # Safe sampling
+            X_plot, y_plot = self._safe_sample(X_transformed, y, max_samples=2000)
+            
+            unique_classes = np.unique(y_plot)
+            n_classes = len(unique_classes)
+            
+            if n_classes > 50:
+                print(f"⚠️  Too many classes ({n_classes}) for heatmap, skipping...")
+                return None
+            
+            print(f"   📊 Creating class separation heatmap for {n_classes} classes...")
+            
+            # Calculate class centroids
+            centroids = []
+            class_labels = []
+            for cls in unique_classes:
+                mask = y_plot == cls
+                if np.sum(mask) > 0:
+                    centroid = X_plot[mask].mean(axis=0)
+                    centroids.append(centroid)
+                    class_labels.append(cls)
+            
+            centroids = np.array(centroids)
+            
+            # Calculate pairwise distances between centroids
+            distances = cdist(centroids, centroids, metric='euclidean')
+            
+            # Create heatmap
+            fig, ax = plt.subplots(figsize=(12, 10))
+            
+            im = ax.imshow(distances, cmap='YlOrRd', aspect='auto')
+            
+            # Colorbar
+            cbar = plt.colorbar(im, ax=ax)
+            cbar.set_label('Euclidean Distance', fontsize=11, fontweight='bold')
+            
+            # Labels
+            ax.set_xticks(range(len(class_labels)))
+            ax.set_yticks(range(len(class_labels)))
+            ax.set_xticklabels(class_labels, rotation=90, fontsize=8)
+            ax.set_yticklabels(class_labels, fontsize=8)
+            
+            ax.set_xlabel('Class', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Class', fontsize=12, fontweight='bold')
+            
+            title = (f'Class Separation Heatmap - {level.upper()} K{kmer} ({method.upper()}) [{split.upper()}]\n'
+                    f'Pairwise distances between class centroids')
+            ax.set_title(title, fontsize=13, fontweight='bold', pad=15)
+            
+            plt.tight_layout()
+            
+            filename = f"class_separation_heatmap_{split}.{self.plot_format}"
+            filepath = output_dir / filename
+            plt.savefig(filepath, dpi=self.dpi, bbox_inches='tight')
+            plt.close()
+            
+            print(f"   ✅ Class separation heatmap saved: {filename}")
+            
+            MemoryManager.force_gc()
+            return str(filepath)
+            
+        except Exception as e:
+            print(f"⚠️  Failed to create class separation heatmap: {e}")
+            plt.close('all')
+            return None
+    
+    # ... (keep existing plot_2d_projection and plot_summary_comparison methods)
     
     def plot_2d_projection(self, X_transformed, y, level, kmer, method, output_dir):
         """Plot 2D projection dengan memory safety"""
@@ -436,7 +733,7 @@ class OutputManager:
         return str(file_path)
 
 # =================================================================
-# 5. MEMORY-SAFE BENCHMARK CLASS
+# 5. MEMORY-SAFE BENCHMARK CLASS (FIXED - NO DATA LEAKAGE)
 # =================================================================
 
 class SimplifiedBenchmark:
@@ -458,7 +755,7 @@ class SimplifiedBenchmark:
                 )
     
     def find_optimal_components(self, X, y, method):
-        """Find optimal components dengan ITERATIVE SEARCH"""
+        """Find optimal components dengan ITERATIVE SEARCH (TRAIN ONLY)"""
         MemoryManager.log_memory("Before component optimization")
         
         # Auto-calculate batch size if not provided
@@ -537,9 +834,10 @@ class SimplifiedBenchmark:
             pbar.close()
             
             variance_ratio = model.explained_variance_ratio_
+            final_cev = np.cumsum(variance_ratio)[optimal_n-1]  # 👈 CEV at optimal_n
             
         elif method == 'svd':
-            # SVD logic (unchanged)
+            # SVD logic
             print("⚠️  SVD uses full matrix, checking memory...")
             dense_size = MemoryManager.estimate_dense_memory(X)
             
@@ -578,18 +876,19 @@ class SimplifiedBenchmark:
             model = TruncatedSVD(n_components=optimal_n)
             model.fit(X)
             variance_ratio = model.explained_variance_ratio_
+            final_cev = np.cumsum(variance_ratio)[optimal_n-1]  # 👈 CEV at optimal_n
         
         else:
-            return self.config.start_components, None
+            return self.config.start_components, None, 0.0, None
         
         MemoryManager.log_memory("After component optimization")
         MemoryManager.force_gc()
         
-        return optimal_n, variance_ratio
+        # 👇 RETURN MODEL untuk digunakan transform test data
+        return optimal_n, variance_ratio, final_cev, model
     
-    def transform_data(self, X, y, method, n_components):
-        """Transform data dengan memory management"""
-        MemoryManager.log_memory("Before transformation")
+    def _transform_with_model(self, X, model, method):
+        """Transform data using FITTED model (NO FITTING!)"""
         
         # Auto-calculate batch size
         if self.config.batch_size is None:
@@ -598,30 +897,16 @@ class SimplifiedBenchmark:
             batch_size = self.config.batch_size
         
         if method == 'ipca':
-            model = IncrementalPCA(n_components=n_components)
-            
-            # Fit incrementally
-            print("🔧 Fitting model...")
-            n_batches = int(np.ceil(X.shape[0] / batch_size))
-            pbar = tqdm(total=n_batches, desc="Fitting")
-            
-            for i in range(0, X.shape[0], batch_size):
-                self._check_memory_emergency()
-                batch = X[i:i+batch_size].toarray()
-                model.partial_fit(batch)
-                del batch
-                MemoryManager.force_gc()
-                pbar.update(1)
-            pbar.close()
-            
-            # Transform incrementally
-            print("🔧 Transforming data...")
+            print(f"   🔄 Transforming data with IncrementalPCA (NO FITTING)...")
             X_transformed = []
-            pbar = tqdm(total=n_batches, desc="Transforming")
+            
+            n_batches = int(np.ceil(X.shape[0] / batch_size))
+            pbar = tqdm(total=n_batches, desc="Transforming", leave=False)
             
             for i in range(0, X.shape[0], batch_size):
                 self._check_memory_emergency()
                 batch = X[i:i+batch_size].toarray()
+                # 👇 ONLY TRANSFORM - NO FITTING!
                 X_transformed.append(model.transform(batch))
                 del batch
                 MemoryManager.force_gc()
@@ -631,49 +916,22 @@ class SimplifiedBenchmark:
             result = np.vstack(X_transformed)
             del X_transformed
             MemoryManager.force_gc()
-            
             return result
             
         elif method == 'svd':
-            print("🔧 Transforming with SVD (using sparse matrix)...")
-            model = TruncatedSVD(n_components=n_components)
-            result = model.fit_transform(X)
-            MemoryManager.force_gc()
-            return result
-            
-        elif method == 'umap' and UMAP_AVAILABLE:
-            print("⚠️  UMAP requires dense matrix - using sampling if needed")
-            
-            # Check if we need to sample
-            dense_size = MemoryManager.estimate_dense_memory(X)
-            if dense_size > self.config.max_memory_gb:
-                max_samples = int((self.config.max_memory_gb * 1e9) / (X.shape[1] * 8))
-                print(f"⚠️  Sampling to {max_samples} rows for UMAP")
-                indices = np.random.choice(X.shape[0], max_samples, replace=False)
-                X_sample = X[indices].toarray()
-                y_sample = y[indices]
-            else:
-                X_sample = X.toarray()
-                y_sample = y
-            
-            model = umap.UMAP(
-                n_components=n_components, 
-                n_neighbors=self.config.umap_neighbors
-            )
-            result = model.fit_transform(X_sample)
-            
-            del X_sample
-            MemoryManager.force_gc()
-            return result
+            print(f"   🔄 Transforming data with TruncatedSVD (NO FITTING)...")
+            # 👇 ONLY TRANSFORM - NO FITTING!
+            return model.transform(X)
         
-        return None
+        else:
+            raise ValueError(f"Unsupported method: {method}")
     
-    def save_results(self, X_transformed, y, method, level, kmer, fold):
-        """Save results dengan chunking untuk memory safety"""
+    def save_results(self, X_transformed, y, method, level, kmer, fold, split='train'):
+        """Save results dengan split identifier"""
         MemoryManager.log_memory("Before saving results")
         
         output_dir = self.output_mgr.get_output_dir(level, kmer, method)
-        filename = f"features_fold{fold}.csv"
+        filename = f"features_fold{fold}_{split}.csv"  # 👈 ADD SPLIT TO FILENAME
         filepath = output_dir / filename
         
         if self.output_mgr.should_skip(filepath):
@@ -683,7 +941,7 @@ class SimplifiedBenchmark:
         # Save in chunks if data is large
         chunk_size = 10000
         if len(X_transformed) > chunk_size:
-            print(f"💾 Saving in chunks...")
+            print(f"💾 Saving {split} data in chunks...")
             
             # Save first chunk with header
             df_chunk = pd.DataFrame(X_transformed[:chunk_size])
@@ -702,14 +960,13 @@ class SimplifiedBenchmark:
             df['label'] = y
             df.to_csv(filepath, index=False)
         
-        print(f"💾 Saved: {filepath}")
+        print(f"💾 Saved {split} data: {filepath}")
         MemoryManager.log_memory("After saving results")
     
     def run(self, loader: DataLoader):
-        """Main benchmark loop dengan comprehensive memory management"""
-        print("🚀 Starting Memory-Safe Benchmark")
+        """Main benchmark loop - FIXED NO DATA LEAKAGE"""
+        print("🚀 Starting Memory-Safe Benchmark (NO DATA LEAKAGE)")
         print(f"⚙️  Max memory per operation: {self.config.max_memory_gb}GB")
-        print(f"⚙️  Emergency stop threshold: {self.config.emergency_stop_threshold}%")
         
         MemoryManager.log_memory("Initial")
         
@@ -719,86 +976,175 @@ class SimplifiedBenchmark:
                 print(f"🧬 {level.upper()} - K-mer {kmer}")
                 
                 try:
+                    # ✅ LOAD BOTH TRAIN & TEST
                     X_train, y_train = loader.load_data(level, kmer, 'train')
-                    print(f"✅ Data loaded: {X_train.shape}")
+                    X_test, y_test = loader.load_data(level, kmer, 'test')
+                    print(f"✅ Train data loaded: {X_train.shape}")
+                    print(f"✅ Test data loaded: {X_test.shape}")
                     
                     for method in self.config.methods:
                         print(f"\n🔧 Method: {method.upper()}")
                         
+                        # Track memory usage
+                        memory_samples = []
+                        
                         try:
                             start = time.time()
+                            mem_start = MemoryManager.get_memory_info()
+                            memory_samples.append(mem_start['rss_gb'])
                             
-                            # Find optimal components
-                            n_comp, variance_ratio = self.find_optimal_components(
+                            # =================================================
+                            # STEP 1: FIND OPTIMAL COMPONENTS (TRAIN ONLY!)
+                            # =================================================
+                            print(f"\n📊 Step 1: Finding optimal components on TRAIN data ONLY...")
+                            n_comp, variance_ratio, train_cev, fitted_model = self.find_optimal_components(
                                 X_train, y_train, method
                             )
-                            print(f"   Optimal components: {n_comp}")
+                            print(f"   ✅ Optimal components: {n_comp}")
+                            print(f"   📈 Train CEV Score: {train_cev:.4f}")
                             
-                            # Transform data
-                            X_transformed = self.transform_data(
-                                X_train, y_train, method, n_comp
+                            mem_after_opt = MemoryManager.get_memory_info()
+                            memory_samples.append(mem_after_opt['rss_gb'])
+                            
+                            # =================================================
+                            # STEP 2: TRANSFORM TRAIN DATA (using fitted model)
+                            # =================================================
+                            print(f"\n🔄 Step 2: Transforming TRAIN data...")
+                            X_train_transformed = self._transform_with_model(
+                                X_train, fitted_model, method
                             )
                             
-                            # Calculate silhouette on sample
-                            sample_size = min(1000, len(X_transformed))
-                            indices = np.random.choice(len(X_transformed), sample_size, replace=False)
-                            silhouette = silhouette_score(
-                                X_transformed[indices],
-                                y_train[indices]
+                            mem_after_train_transform = MemoryManager.get_memory_info()
+                            memory_samples.append(mem_after_train_transform['rss_gb'])
+                            
+                            # =================================================
+                            # STEP 3: TRANSFORM TEST DATA (NO FITTING!)
+                            # =================================================
+                            print(f"\n🔄 Step 3: Transforming TEST data (using TRAINED model - NO FITTING)...")
+                            print(f"   🛡️  Preventing data leakage - TEST is only transformed!")
+                            X_test_transformed = self._transform_with_model(
+                                X_test, fitted_model, method
                             )
+                            
+                            # ❌ NO CEV FOR TEST - PREVENT DATA LEAKAGE!
+                            print(f"   ✅ Test data transformed (shape: {X_test_transformed.shape})")
+                            print(f"   🛡️  NO CEV calculated for test - preventing data leakage!")
+                            
+                            mem_after_test_transform = MemoryManager.get_memory_info()
+                            memory_samples.append(mem_after_test_transform['rss_gb'])
                             
                             elapsed = time.time() - start
-                            print(f"   Silhouette (sample): {silhouette:.4f}")
-                            print(f"   Time: {elapsed:.2f}s")
                             
-                            # Save results
-                            self.save_results(X_transformed, y_train, method, level, kmer, 0)
+                            # Calculate average memory usage
+                            avg_memory_gb = np.mean(memory_samples)
+                            peak_memory_gb = np.max(memory_samples)
                             
-                            # Create plots
+                            # =================================================
+                            # STEP 4: SAVE BOTH TRAIN & TEST
+                            # =================================================
+                            print(f"\n💾 Step 4: Saving results...")
+                            
+                            # Save TRAIN
+                            self.save_results(
+                                X_train_transformed, y_train, method, level, kmer, 
+                                fold=0, split='train'
+                            )
+                            
+                            # Save TEST
+                            self.save_results(
+                                X_test_transformed, y_test, method, level, kmer, 
+                                fold=0, split='test'
+                            )
+
+                            # =================================================
+                            # STEP 5: CREATE PLOTS (ENHANCED)
+                            # =================================================
                             if self.plotter:
                                 output_dir = self.output_mgr.get_output_dir(level, kmer, method)
-                                print(f"\n📊 Creating plots...")
+                                print(f"\n📊 Step 5: Creating enhanced plots...")
                                 
+                                # 1. Variance Explained
                                 if variance_ratio is not None:
                                     self.plotter.plot_variance_explained(
                                         variance_ratio, n_comp, level, kmer, method, output_dir
                                     )
                                 
-                                self.plotter.plot_2d_projection(
-                                    X_transformed, y_train, level, kmer, method, output_dir
+                                # 2. 🎨 PCA Feature Space - TRAIN (SEMUA LABEL!)
+                                print(f"   🎨 Creating PCA feature space plot (TRAIN - ALL LABELS)...")
+                                self.plotter.plot_pca_feature_space_all_labels(
+                                    X_train_transformed, y_train, level, kmer, 
+                                    method, output_dir, split='train'
                                 )
                                 
-                                self.plotter.plot_component_distribution(
-                                    X_transformed, level, kmer, method, output_dir
+                                # 3. 🎨 PCA Feature Space - TEST (SEMUA LABEL!)
+                                print(f"   🎨 Creating PCA feature space plot (TEST - ALL LABELS)...")
+                                self.plotter.plot_pca_feature_space_all_labels(
+                                    X_test_transformed, y_test, level, kmer, 
+                                    method, output_dir, split='test'
                                 )
-                            
+                                
+                                # 4. 🎨 3D Feature Space - TRAIN (BONUS)
+                                if X_train_transformed.shape[1] >= 3:
+                                    print(f"   🎨 Creating 3D PCA feature space plot (TRAIN)...")
+                                    self.plotter.plot_pca_feature_space_3d(
+                                        X_train_transformed, y_train, level, kmer, 
+                                        method, output_dir, split='train'
+                                    )
+                                
+                                # 5. 🎨 Class Separation Heatmap - TRAIN
+                                print(f"   🎨 Creating class separation heatmap (TRAIN)...")
+                                self.plotter.plot_class_separation_heatmap(
+                                    X_train_transformed, y_train, level, kmer, 
+                                    method, output_dir, split='train'
+                                )
+                                
+                                # 6. Component Distribution
+                                self.plotter.plot_component_distribution(
+                                    X_train_transformed, level, kmer, method, output_dir
+                                )
+                                
+                                print(f"   ✅ All plots created successfully!")
+
+                            # =================================================
+                            # STEP 6: SAVE METRICS (NO TEST CEV!)
+                            # =================================================
                             self.results.append({
                                 'level': level,
                                 'kmer': kmer,
                                 'method': method,
                                 'n_components': n_comp,
-                                'silhouette': silhouette,
-                                'time': elapsed
+                                'train_cev_score': train_cev,
+                                # ❌ NO test_cev_score - PREVENT DATA LEAKAGE!
+                                'avg_memory_gb': avg_memory_gb,
+                                'peak_memory_gb': peak_memory_gb,
+                                'time_seconds': elapsed
                             })
                             
+                            print(f"\n✅ SUCCESS: {method} completed!")
+                            print(f"   📊 Train CEV Score: {train_cev:.4f}")
+                            print(f"   🛡️  Test CEV: NOT CALCULATED (preventing data leakage)")
+                            print(f"   🧠 Avg Memory: {avg_memory_gb:.2f}GB")
+                            print(f"   🧠 Peak Memory: {peak_memory_gb:.2f}GB")
+                            print(f"   ⏱️  Time: {elapsed:.2f}s")
+                            
                             # Clean up
-                            del X_transformed
+                            del X_train_transformed, X_test_transformed, fitted_model
                             MemoryManager.force_gc()
                             MemoryManager.log_memory(f"After {method}")
                             
                         except MemoryError as e:
                             print(f"❌ MEMORY ERROR: {e}")
-                            print(f"   Skipping {method} for {level} k{kmer}")
                             MemoryManager.force_gc()
                             continue
                         
                         except Exception as e:
                             print(f"❌ ERROR: {e}")
-                            print(f"   Skipping {method} for {level} k{kmer}")
+                            import traceback
+                            traceback.print_exc()
                             continue
                     
                     # Clean up after each dataset
-                    del X_train, y_train
+                    del X_train, y_train, X_test, y_test
                     MemoryManager.force_gc()
                     
                 except Exception as e:
@@ -811,10 +1157,21 @@ class SimplifiedBenchmark:
         summary_df.to_csv(summary_file, index=False)
         print(f"\n💾 Summary: {summary_file}")
         
-        # Create summary plot
-        if self.plotter and len(summary_df) > 0:
-            print(f"\n📊 Creating summary comparison plot...")
-            self.plotter.plot_summary_comparison(summary_df, self.output_mgr.base_path)
+        # Print summary statistics
+        if len(summary_df) > 0:
+            print(f"\n{'='*60}")
+            print("📊 BENCHMARK SUMMARY (NO DATA LEAKAGE)")
+            print(f"{'='*60}")
+            print(summary_df.to_string(index=False))
+            
+            print(f"\n📈 AVERAGE METRICS BY METHOD:")
+            print(summary_df.groupby('method').agg({
+                'n_components': 'mean',
+                'train_cev_score': 'mean',
+                'avg_memory_gb': 'mean',
+                'peak_memory_gb': 'mean',
+                'time_seconds': 'mean'
+            }).round(4))
         
         MemoryManager.log_memory("Final")
         
