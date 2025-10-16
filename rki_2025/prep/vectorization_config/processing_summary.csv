@@ -1,0 +1,5 @@
+level,k_mer,n_samples,n_features,n_classes,n_train_samples,n_test_samples,test_size,train_test_split,status
+genus,6,27958,6943,2753,19570,8388,0.3,True,success
+genus,8,27958,69265,2753,19570,8388,0.3,True,success
+species,6,12667,5900,1518,8866,3801,0.3,True,success
+species,8,12667,61582,1518,8866,3801,0.3,True,success

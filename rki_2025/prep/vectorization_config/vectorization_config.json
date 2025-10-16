@@ -1,0 +1,107 @@
+{
+  "timestamp": "2025-10-15T23:44:46.430331",
+  "vectorization_paths": {
+    "genus": {
+      "k6": {
+        "label_encoder": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k6/label_encoder_k6_genus.pkl",
+        "vectorizer": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k6/vectorizer_k6_genus.pkl",
+        "X_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k6/X_sparse_k6_genus.npz",
+        "y_encoded": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k6/y_encoded_k6_genus.npy",
+        "X_train_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k6/X_train_sparse_k6_genus.npz",
+        "y_train": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k6/y_train_k6_genus.npy",
+        "X_test_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k6/X_test_sparse_k6_genus.npz",
+        "y_test": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k6/y_test_k6_genus.npy",
+        "y_train_csv": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k6/y_train_k6_genus.csv",
+        "y_test_csv": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k6/y_test_k6_genus.csv"
+      },
+      "k8": {
+        "label_encoder": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k8/label_encoder_k8_genus.pkl",
+        "vectorizer": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k8/vectorizer_k8_genus.pkl",
+        "X_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k8/X_sparse_k8_genus.npz",
+        "y_encoded": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k8/y_encoded_k8_genus.npy",
+        "X_train_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k8/X_train_sparse_k8_genus.npz",
+        "y_train": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k8/y_train_k8_genus.npy",
+        "X_test_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k8/X_test_sparse_k8_genus.npz",
+        "y_test": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k8/y_test_k8_genus.npy",
+        "y_train_csv": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k8/y_train_k8_genus.csv",
+        "y_test_csv": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/genus/k8/y_test_k8_genus.csv"
+      }
+    },
+    "species": {
+      "k6": {
+        "label_encoder": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k6/label_encoder_k6_species.pkl",
+        "vectorizer": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k6/vectorizer_k6_species.pkl",
+        "X_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k6/X_sparse_k6_species.npz",
+        "y_encoded": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k6/y_encoded_k6_species.npy",
+        "X_train_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k6/X_train_sparse_k6_species.npz",
+        "y_train": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k6/y_train_k6_species.npy",
+        "X_test_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k6/X_test_sparse_k6_species.npz",
+        "y_test": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k6/y_test_k6_species.npy",
+        "y_train_csv": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k6/y_train_k6_species.csv",
+        "y_test_csv": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k6/y_test_k6_species.csv"
+      },
+      "k8": {
+        "label_encoder": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k8/label_encoder_k8_species.pkl",
+        "vectorizer": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k8/vectorizer_k8_species.pkl",
+        "X_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k8/X_sparse_k8_species.npz",
+        "y_encoded": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k8/y_encoded_k8_species.npy",
+        "X_train_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k8/X_train_sparse_k8_species.npz",
+        "y_train": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k8/y_train_k8_species.npy",
+        "X_test_sparse": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k8/X_test_sparse_k8_species.npz",
+        "y_test": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k8/y_test_k8_species.npy",
+        "y_train_csv": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k8/y_train_k8_species.csv",
+        "y_test_csv": "/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization/species/k8/y_test_k8_species.csv"
+      }
+    }
+  },
+  "summary": [
+    {
+      "level": "genus",
+      "k_mer": 6,
+      "n_samples": 27958,
+      "n_features": 6943,
+      "n_classes": 2753,
+      "n_train_samples": 19570,
+      "n_test_samples": 8388,
+      "test_size": 0.3,
+      "train_test_split": true,
+      "status": "success"
+    },
+    {
+      "level": "genus",
+      "k_mer": 8,
+      "n_samples": 27958,
+      "n_features": 69265,
+      "n_classes": 2753,
+      "n_train_samples": 19570,
+      "n_test_samples": 8388,
+      "test_size": 0.3,
+      "train_test_split": true,
+      "status": "success"
+    },
+    {
+      "level": "species",
+      "k_mer": 6,
+      "n_samples": 12667,
+      "n_features": 5900,
+      "n_classes": 1518,
+      "n_train_samples": 8866,
+      "n_test_samples": 3801,
+      "test_size": 0.3,
+      "train_test_split": true,
+      "status": "success"
+    },
+    {
+      "level": "species",
+      "k_mer": 8,
+      "n_samples": 12667,
+      "n_features": 61582,
+      "n_classes": 1518,
+      "n_train_samples": 8866,
+      "n_test_samples": 3801,
+      "test_size": 0.3,
+      "train_test_split": true,
+      "status": "success"
+    }
+  ]
+}
