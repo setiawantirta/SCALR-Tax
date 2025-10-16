@@ -15,7 +15,6 @@ import gc
 
 # ML Libraries
 from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import GaussianNB
@@ -28,7 +27,7 @@ from sklearn.metrics import (
 
 # Configuration
 CONFIG = {
-    'BASE_DIR': '/Users/tirtasetiawan/Documents/rki_v1/benchmark/models',
+    'BASE_DIR': '/kaggle/working/FASTA-KmerReduce/rki_2025/model',
     'RANDOM_STATE': 42
 }
 
@@ -162,28 +161,20 @@ class SimpleDataLoader:
 
 
 def create_ml_pipelines():
-    """Create ML pipelines with preprocessing"""
+    """Create ML pipelines with preprocessing - FIXED VERSION"""
     
-    # Column transformer for preprocessing
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('scaler', StandardScaler(), slice(None))
-        ],
-        remainder='passthrough'
-    )
-    
-    # Define models
+    # Define models with StandardScaler in pipeline
     models = {
         'KNN': Pipeline([
-            ('preprocessor', preprocessor),
+            ('scaler', StandardScaler()),
             ('classifier', KNeighborsClassifier(n_neighbors=5))
         ]),
         'NaiveBayes': Pipeline([
-            ('preprocessor', preprocessor),
+            ('scaler', StandardScaler()),
             ('classifier', GaussianNB())
         ]),
         'RandomForest': Pipeline([
-            ('preprocessor', preprocessor),
+            ('scaler', StandardScaler()),
             ('classifier', RandomForestClassifier(
                 n_estimators=100,
                 max_depth=None,
@@ -192,7 +183,7 @@ def create_ml_pipelines():
             ))
         ]),
         'XGBoost': Pipeline([
-            ('preprocessor', preprocessor),
+            ('scaler', StandardScaler()),
             ('classifier', XGBClassifier(
                 n_estimators=100,
                 max_depth=3,
@@ -273,7 +264,7 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
         
     Returns:
     --------
-    tuple : (results_df, best_model_name)
+    tuple : (results_df, best_model_name, best_model_pipeline)
     """
     print(f"\n🚀 **TRAINING PIPELINE**")
     print(f"Dataset: {dataset_name}")
@@ -291,6 +282,7 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
     
     results = []
     all_predictions = []
+    trained_models = {}
     
     for model_name, pipeline in tqdm(models.items(), desc="Training models"):
         model_path = os.path.join(output_dir, f"{dataset_name}_{model_name}_model.pkl")
@@ -307,14 +299,19 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
                 # Save model
                 joblib.dump(pipeline, model_path)
                 print(f"✅ Model saved: {model_path}")
+                
+                trained_models[model_name] = pipeline
             except Exception as e:
                 print(f"❌ Error training {model_name}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
         else:
             print(f"\n📂 Loading {model_name}...")
             try:
                 pipeline = joblib.load(model_path)
                 train_time = 0
+                trained_models[model_name] = pipeline
             except Exception as e:
                 print(f"❌ Error loading {model_name}: {e}")
                 continue
@@ -350,6 +347,8 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
             
         except Exception as e:
             print(f"❌ Error evaluating {model_name}: {e}")
+            import traceback
+            traceback.print_exc()
             continue
         
         gc.collect()
@@ -372,13 +371,21 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
         print("="*60)
         print(results_df.sort_values('F1_Macro', ascending=False).to_string(index=False))
         
-        best_model = results_df.sort_values('F1_Macro', ascending=False).iloc[0]
-        print(f"\n🏆 Best Model: {best_model['Model']} (F1: {best_model['F1_Macro']:.4f})")
+        best_model_row = results_df.sort_values('F1_Macro', ascending=False).iloc[0]
+        best_model_name = best_model_row['Model']
         
-        return results_df, best_model['Model']
+        print(f"\n🏆 Best Model: {best_model_name} (F1: {best_model_row['F1_Macro']:.4f})")
+        
+        # Save best model separately
+        if best_model_name in trained_models:
+            best_model_path = os.path.join(output_dir, f"{dataset_name}_BEST_MODEL.pkl")
+            joblib.dump(trained_models[best_model_name], best_model_path)
+            print(f"✅ Best model saved: {best_model_path}")
+        
+        return results_df, best_model_name, trained_models.get(best_model_name)
     else:
         print("❌ No models were successfully trained")
-        return None, None
+        return None, None, None
 
 
 # ================================
@@ -411,14 +418,14 @@ if __name__ == "__main__":
     
     if data is not None:
         # Run training
-        results_df, best_model = run_training_pipeline(
+        results_df, best_model_name, best_model = run_training_pipeline(
             X_train=data['X_train'],
             X_test=data['X_test'],
             y_train=data['y_train'],
             y_test=data['y_test'],
             dataset_name='my_dataset',
             label_encoder=data['label_encoder'],
-            output_dir='/path/to/output'
+            output_dir='/kaggle/working/FASTA-KmerReduce/rki_2025/model'
         )
     
     # Example 2: Direct usage with numpy arrays
@@ -426,13 +433,13 @@ if __name__ == "__main__":
     print("-" * 30)
     print("""
     # If you already have numpy arrays:
-    results_df, best_model = run_training_pipeline(
+    results_df, best_model_name, best_model = run_training_pipeline(
         X_train=X_train_array,
         X_test=X_test_array,
         y_train=y_train_array,
         y_test=y_test_array,
         dataset_name='my_dataset',
-        output_dir='/path/to/output'
+        output_dir='/kaggle/working/FASTA-KmerReduce/rki_2025/model'
     )
     """)
     
@@ -460,6 +467,8 @@ if __name__ == "__main__":
     ]
     
     all_results = []
+    best_models = []
+    
     for ds in datasets:
         data = loader.load_from_csv(
             X_train_path=ds['X_train'],
@@ -469,17 +478,25 @@ if __name__ == "__main__":
         )
         
         if data:
-            results_df, best_model = run_training_pipeline(
+            results_df, best_name, best_model = run_training_pipeline(
                 X_train=data['X_train'],
                 X_test=data['X_test'],
                 y_train=data['y_train'],
                 y_test=data['y_test'],
                 dataset_name=ds['name']
             )
-            all_results.append(results_df)
+            
+            if results_df is not None:
+                all_results.append(results_df)
+                best_models.append({
+                    'dataset': ds['name'],
+                    'model_name': best_name,
+                    'model': best_model
+                })
     
     # Combine all results
     if all_results:
         combined = pd.concat(all_results, ignore_index=True)
-        combined.to_csv('all_results.csv', index=False)
+        combined.to_csv('/kaggle/working/FASTA-KmerReduce/rki_2025/model/all_results.csv', index=False)
+        print(f"✅ Combined results saved")
     """)
