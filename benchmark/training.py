@@ -276,12 +276,16 @@ def create_ml_pipelines(selected_models=None, use_partial_fit=False):
         'SGD': Pipeline([
             ('scaler', StandardScaler()),
             ('classifier', SGDClassifier(
-                loss='log_loss',  # For probability estimates
+                loss='log_loss',  # PENTING: Untuk probability estimates (sebelumnya 'log')
                 penalty='l2',
+                alpha=0.0001,
                 max_iter=1000,
                 tol=1e-3,
                 random_state=CONFIG['RANDOM_STATE'],
-                n_jobs=-1
+                n_jobs=-1,
+                learning_rate='optimal',  # Tambahkan learning rate strategy
+                early_stopping=False,  # Disable early stopping untuk consistency
+                warm_start=False  # Fresh start setiap training
             ))
         ])
     }
@@ -320,6 +324,7 @@ def create_ml_pipelines(selected_models=None, use_partial_fit=False):
     return models_to_use
 
 
+
 def get_memory_usage():
     """Get current memory usage in MB"""
     process = psutil.Process()
@@ -342,38 +347,100 @@ def evaluate_model(model, X_test, y_test, model_name, label_encoder=None):
     
     # Get prediction probabilities
     y_proba = None
+    
+    # Try predict_proba first
     if hasattr(model.named_steps['classifier'], 'predict_proba'):
         try:
             y_proba = model.predict_proba(X_test)
+            print(f"   ✅ Got probabilities via predict_proba()")
+            
+            # Calculate ROC AUC
             if len(np.unique(y_test)) > 2:
                 metrics['ROC_AUC'] = roc_auc_score(y_test, y_proba, 
                                                    multi_class='ovr', 
                                                    average='macro')
             else:
                 metrics['ROC_AUC'] = roc_auc_score(y_test, y_proba[:, 1])
+                
         except Exception as e:
-            print(f"   ⚠️ Could not calculate ROC AUC: {e}")
-            metrics['ROC_AUC'] = np.nan
+            print(f"   ⚠️ predict_proba() failed: {e}")
+            y_proba = None
+            
+            # Fallback to decision_function for SGD
+            if hasattr(model.named_steps['classifier'], 'decision_function'):
+                try:
+                    print(f"   🔄 Trying decision_function() as fallback...")
+                    y_scores = model.decision_function(X_test)
+                    
+                    # Calculate ROC AUC from decision scores
+                    if len(np.unique(y_test)) == 2:
+                        metrics['ROC_AUC'] = roc_auc_score(y_test, y_scores)
+                    else:
+                        metrics['ROC_AUC'] = roc_auc_score(y_test, y_scores, 
+                                                           multi_class='ovr', 
+                                                           average='macro')
+                    print(f"   ✅ Got ROC AUC via decision_function()")
+                    
+                    # Convert decision scores to pseudo-probabilities for plotting
+                    from scipy.special import expit  # Sigmoid function
+                    if len(y_scores.shape) == 1:  # Binary classification
+                        y_proba_pos = expit(y_scores)
+                        y_proba = np.column_stack([1 - y_proba_pos, y_proba_pos])
+                    else:  # Multi-class
+                        y_proba = expit(y_scores)
+                        # Normalize to sum to 1
+                        y_proba = y_proba / y_proba.sum(axis=1, keepdims=True)
+                    
+                    print(f"   ✅ Converted decision scores to pseudo-probabilities")
+                    
+                except Exception as e2:
+                    print(f"   ⚠️ decision_function() also failed: {e2}")
+                    metrics['ROC_AUC'] = np.nan
+            else:
+                metrics['ROC_AUC'] = np.nan
+    
+    # If still no probabilities, try decision_function
     elif hasattr(model.named_steps['classifier'], 'decision_function'):
-        # For models with decision_function (like SVC without probability)
         try:
+            print(f"   🔄 Using decision_function() (no predict_proba available)...")
             y_scores = model.decision_function(X_test)
+            
+            # Calculate ROC AUC
             if len(np.unique(y_test)) == 2:
                 metrics['ROC_AUC'] = roc_auc_score(y_test, y_scores)
             else:
                 metrics['ROC_AUC'] = roc_auc_score(y_test, y_scores, 
                                                    multi_class='ovr', 
                                                    average='macro')
+            
+            # Convert to pseudo-probabilities
+            from scipy.special import expit
+            if len(y_scores.shape) == 1:
+                y_proba_pos = expit(y_scores)
+                y_proba = np.column_stack([1 - y_proba_pos, y_proba_pos])
+            else:
+                y_proba = expit(y_scores)
+                y_proba = y_proba / y_proba.sum(axis=1, keepdims=True)
+            
+            print(f"   ✅ Converted decision scores to pseudo-probabilities")
+            
         except Exception as e:
-            print(f"   ⚠️ Could not calculate ROC AUC: {e}")
+            print(f"   ⚠️ Could not get decision scores: {e}")
             metrics['ROC_AUC'] = np.nan
     else:
         metrics['ROC_AUC'] = np.nan
+        print(f"   ⚠️ Model has no predict_proba() or decision_function()")
     
+    # Print results
     print(f"   ✅ Accuracy: {metrics['Accuracy']:.4f}")
     print(f"   ✅ F1 Score: {metrics['F1_Macro']:.4f}")
     if not np.isnan(metrics['ROC_AUC']):
         print(f"   ✅ ROC AUC: {metrics['ROC_AUC']:.4f}")
+    
+    if y_proba is not None:
+        print(f"   ✅ Probabilities shape: {y_proba.shape}")
+    else:
+        print(f"   ⚠️ No probabilities available for confidence analysis")
     
     return metrics, y_pred, y_proba
 
