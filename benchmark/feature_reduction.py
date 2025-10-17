@@ -350,11 +350,11 @@ class PlottingManager:
                 cbar.set_label('Class Label', fontsize=11, fontweight='bold')
                 
                 # Add text info
-                ax.text(1.02, 0.98, f'{n_classes} classes', 
-                       transform=ax.transAxes, 
-                       fontsize=10, 
-                       verticalalignment='top',
-                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                # ax.text(1.02, 0.98, f'{n_classes} classes', 
+                #        transform=ax.transAxes, 
+                #        fontsize=10, 
+                #        verticalalignment='top',
+                #        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
             
             ax.grid(True, alpha=0.3, linestyle='--')
             
@@ -379,6 +379,7 @@ class PlottingManager:
     def plot_pca_feature_space_3d(self, X_transformed, y, level, kmer, method, output_dir, split='train'):
         """
         🎨 Plot PCA/Feature Space 3D dengan SEMUA LABEL (bonus)
+        FIXED: Legend dan PC3 tidak terpotong
         """
         try:
             if X_transformed.shape[1] < 3:
@@ -393,10 +394,21 @@ class PlottingManager:
             
             print(f"   📊 Creating 3D plot with {len(X_plot)} samples and {n_classes} classes...")
             
-            # Create 3D figure
+            # Create 3D figure with adjusted size
             from mpl_toolkits.mplot3d import Axes3D
-            fig = plt.figure(figsize=(16, 12))
-            ax = fig.add_subplot(111, projection='3d')
+            
+            # ✅ LARGER FIGURE SIZE untuk prevent clipping
+            if n_classes <= 10:
+                figsize = (18, 12)
+            elif n_classes <= 20:
+                figsize = (20, 14)
+            else:
+                figsize = (22, 16)
+            
+            fig = plt.figure(figsize=figsize)
+            
+            # ✅ ADJUST SUBPLOT POSITION - Lebih ke kiri untuk beri ruang legend
+            ax = fig.add_subplot(111, projection='3d', position=[0.05, 0.05, 0.65, 0.9])
             
             # Generate colors
             if n_classes <= 20:
@@ -421,23 +433,61 @@ class PlottingManager:
                     linewidth=0.2
                 )
             
-            # Styling
-            ax.set_xlabel('PC1', fontsize=12, fontweight='bold', labelpad=10)
-            ax.set_ylabel('PC2', fontsize=12, fontweight='bold', labelpad=10)
-            ax.set_zlabel('PC3', fontsize=12, fontweight='bold', labelpad=10)
+            # ✅ STYLING dengan extra padding untuk axis labels
+            ax.set_xlabel('PC1', fontsize=12, fontweight='bold', labelpad=15)  # Increased labelpad
+            ax.set_ylabel('PC2', fontsize=12, fontweight='bold', labelpad=15)
+            ax.set_zlabel('PC3', fontsize=12, fontweight='bold', labelpad=15)  # Increased labelpad
+            
+            # ✅ ADJUST AXIS LIMITS untuk prevent clipping
+            # Add some padding to z-axis
+            z_min, z_max = X_plot[:, 2].min(), X_plot[:, 2].max()
+            z_range = z_max - z_min
+            ax.set_zlim(z_min - 0.1 * z_range, z_max + 0.1 * z_range)
             
             title = (f'3D PCA Feature Space - {level.upper()} K{kmer} ({method.upper()}) [{split.upper()}]\n'
                     f'{len(X_plot):,} samples | {n_classes} classes')
             ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
             
-            # Legend
+            # ✅ LEGEND POSITIONING - Di luar plot area
             if n_classes <= 20:
-                ax.legend(loc='upper left', bbox_to_anchor=(1.05, 1), fontsize=8)
+                # Legend di kanan plot dengan positioning yang jelas
+                ax.legend(
+                    loc='upper left', 
+                    bbox_to_anchor=(1.15, 1.0),  # Adjusted position
+                    fontsize=8,
+                    frameon=True,
+                    fancybox=True,
+                    shadow=True,
+                    borderaxespad=0
+                )
+            else:
+                # Terlalu banyak kelas: legend di bawah plot
+                ax.legend(
+                    loc='upper center',
+                    bbox_to_anchor=(0.5, -0.05),
+                    fontsize=7,
+                    ncol=min(5, n_classes // 4),
+                    frameon=True,
+                    fancybox=True
+                )
             
-            # Save
+            # ✅ ADJUST VIEW ANGLE untuk better visibility
+            ax.view_init(elev=20, azim=45)  # Optimal viewing angle
+            
+            # ✅ TIGHT LAYOUT dengan extra padding
+            plt.tight_layout(pad=2.0)  # Extra padding
+            
+            # Save dengan bbox_inches='tight' untuk capture semua elements
             filename = f"pca_feature_space_3d_{split}.{self.plot_format}"
             filepath = output_dir / filename
-            plt.savefig(filepath, dpi=self.dpi, bbox_inches='tight')
+            
+            # ✅ SAVE dengan pad_inches untuk extra space
+            plt.savefig(
+                filepath, 
+                dpi=self.dpi, 
+                bbox_inches='tight',
+                pad_inches=0.3  # Extra padding around figure
+            )
             plt.close()
             
             print(f"   ✅ 3D PCA feature space plot saved: {filename}")
@@ -447,6 +497,8 @@ class PlottingManager:
             
         except Exception as e:
             print(f"⚠️  Failed to create 3D PCA plot: {e}")
+            import traceback
+            traceback.print_exc()
             plt.close('all')
             return None
     
