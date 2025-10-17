@@ -26,7 +26,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.linear_model import SGDClassifier
 from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 from sklearn.metrics import (
     accuracy_score, f1_score, recall_score, precision_score,
     roc_auc_score, classification_report, confusion_matrix, roc_curve, auc
@@ -36,7 +39,9 @@ from sklearn.preprocessing import label_binarize
 # Configuration
 CONFIG = {
     'BASE_DIR': '/kaggle/working/FASTA-KmerReduce/rki_2025/model',
-    'RANDOM_STATE': 42
+    'RANDOM_STATE': 42,
+    'PARTIAL_FIT_BATCH_SIZE': 1000,  # Batch size for partial fit
+    'USE_PARTIAL_FIT': False  # Set to True for large datasets
 }
 
 
@@ -147,15 +152,71 @@ class SimpleDataLoader:
             return None
 
 
-def create_ml_pipelines(selected_models=None):
+def partial_fit_model(model, X_train, y_train, batch_size=1000, model_name="Model"):
+    """
+    Train model using partial_fit for large datasets
+    
+    Parameters:
+    -----------
+    model : sklearn model with partial_fit method
+        Model to train
+    X_train : array-like
+        Training features
+    y_train : array-like
+        Training labels
+    batch_size : int
+        Size of each batch for partial fit
+    model_name : str
+        Name of the model for logging
+        
+    Returns:
+    --------
+    model : Trained model
+    """
+    print(f"\n⏳ Training {model_name} with partial_fit (batch_size={batch_size})...")
+    
+    n_samples = X_train.shape[0]
+    n_batches = int(np.ceil(n_samples / batch_size))
+    classes = np.unique(y_train)
+    
+    print(f"   Total samples: {n_samples}")
+    print(f"   Number of batches: {n_batches}")
+    print(f"   Classes: {classes}")
+    
+    # Partial fit with progress bar
+    for i in tqdm(range(n_batches), desc=f"Training {model_name} batches"):
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, n_samples)
+        
+        X_batch = X_train[start_idx:end_idx]
+        y_batch = y_train[start_idx:end_idx]
+        
+        # First batch needs classes parameter
+        if i == 0:
+            model.partial_fit(X_batch, y_batch, classes=classes)
+        else:
+            model.partial_fit(X_batch, y_batch)
+        
+        # Periodic garbage collection
+        if i % 10 == 0:
+            gc.collect()
+    
+    print(f"✅ {model_name} training with partial_fit completed")
+    return model
+
+
+def create_ml_pipelines(selected_models=None, use_partial_fit=False):
     """
     Create ML pipelines with preprocessing
     
     Parameters:
     -----------
     selected_models : list, optional
-        List of model names to use. Options: ['KNN', 'NaiveBayes', 'RandomForest', 'XGBoost']
+        List of model names to use. 
+        Options: ['KNN', 'NaiveBayes', 'RandomForest', 'XGBoost', 'SVC', 'LightGBM', 'SGD']
         If None, all models will be used.
+    use_partial_fit : bool, default=False
+        Whether to use partial_fit for NaiveBayes and SGD (for large datasets)
         
     Returns:
     --------
@@ -191,29 +252,72 @@ def create_ml_pipelines(selected_models=None):
                 n_jobs=-1,
                 eval_metric='mlogloss'
             ))
+        ]),
+        'SVC': Pipeline([
+            ('scaler', StandardScaler()),
+            ('classifier', SVC(
+                kernel='linear',
+                C=1.0,
+                probability=True,  # Enable probability estimates
+                random_state=CONFIG['RANDOM_STATE']
+            ))
+        ]),
+        'LightGBM': Pipeline([
+            ('scaler', StandardScaler()),
+            ('classifier', LGBMClassifier(
+                n_estimators=100,
+                max_depth=3,
+                learning_rate=0.1,
+                random_state=CONFIG['RANDOM_STATE'],
+                n_jobs=-1,
+                verbose=-1
+            ))
+        ]),
+        'SGD': Pipeline([
+            ('scaler', StandardScaler()),
+            ('classifier', SGDClassifier(
+                loss='log_loss',  # For probability estimates
+                penalty='l2',
+                max_iter=1000,
+                tol=1e-3,
+                random_state=CONFIG['RANDOM_STATE'],
+                n_jobs=-1
+            ))
         ])
     }
     
+    # Mark which models support partial_fit
+    partial_fit_models = ['NaiveBayes', 'SGD']
+    
     # If no models specified, return all
     if selected_models is None:
-        print("ℹ️  Using all available models: KNN, NaiveBayes, RandomForest, XGBoost")
-        return all_models
+        print("ℹ️  Using all available models: KNN, NaiveBayes, RandomForest, XGBoost, SVC, LightGBM, SGD")
+        models_to_use = all_models
+    else:
+        # Validate selected models
+        available_models = list(all_models.keys())
+        invalid_models = [m for m in selected_models if m not in available_models]
+        
+        if invalid_models:
+            raise ValueError(
+                f"Invalid model names: {invalid_models}. "
+                f"Available models: {available_models}"
+            )
+        
+        # Return only selected models
+        models_to_use = {name: all_models[name] for name in selected_models}
+        print(f"ℹ️  Using selected models: {', '.join(selected_models)}")
     
-    # Validate selected models
-    available_models = list(all_models.keys())
-    invalid_models = [m for m in selected_models if m not in available_models]
+    # Add metadata about partial_fit support
+    for model_name in models_to_use.keys():
+        models_to_use[model_name]._supports_partial_fit = model_name in partial_fit_models
     
-    if invalid_models:
-        raise ValueError(
-            f"Invalid model names: {invalid_models}. "
-            f"Available models: {available_models}"
-        )
+    if use_partial_fit:
+        partial_fit_available = [m for m in models_to_use.keys() if m in partial_fit_models]
+        if partial_fit_available:
+            print(f"ℹ️  Models with partial_fit enabled: {', '.join(partial_fit_available)}")
     
-    # Return only selected models
-    selected = {name: all_models[name] for name in selected_models}
-    print(f"ℹ️  Using selected models: {', '.join(selected_models)}")
-    
-    return selected
+    return models_to_use
 
 
 def get_memory_usage():
@@ -247,6 +351,19 @@ def evaluate_model(model, X_test, y_test, model_name, label_encoder=None):
                                                    average='macro')
             else:
                 metrics['ROC_AUC'] = roc_auc_score(y_test, y_proba[:, 1])
+        except Exception as e:
+            print(f"   ⚠️ Could not calculate ROC AUC: {e}")
+            metrics['ROC_AUC'] = np.nan
+    elif hasattr(model.named_steps['classifier'], 'decision_function'):
+        # For models with decision_function (like SVC without probability)
+        try:
+            y_scores = model.decision_function(X_test)
+            if len(np.unique(y_test)) == 2:
+                metrics['ROC_AUC'] = roc_auc_score(y_test, y_scores)
+            else:
+                metrics['ROC_AUC'] = roc_auc_score(y_test, y_scores, 
+                                                   multi_class='ovr', 
+                                                   average='macro')
         except Exception as e:
             print(f"   ⚠️ Could not calculate ROC AUC: {e}")
             metrics['ROC_AUC'] = np.nan
@@ -347,8 +464,7 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
     plt.xlabel('Models', fontweight='bold')
     plt.ylabel('Score', fontweight='bold')
     plt.title('Model Performance Comparison', pad=20, fontweight='bold', fontsize=14)
-    plt.xticks(x_pos + width*2, results_df['Model'].tolist(), rotation=0, fontweight='bold')
-    # Legend di luar plot - kanan atas
+    plt.xticks(x_pos + width*2, results_df['Model'].tolist(), rotation=45, ha='right', fontweight='bold')
     plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
     plt.grid(True, alpha=0.3)
     plt.ylim(0, 1.1)
@@ -370,12 +486,11 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
         plt.xlabel('Models', fontweight='bold')
         plt.ylabel('Time (seconds)', fontweight='bold')
         plt.title('Training vs Prediction Time', pad=20, fontweight='bold', fontsize=14)
-        plt.xticks(x_pos, results_df['Model'].tolist(), rotation=0, fontweight='bold')
-        # Legend di luar plot - kanan atas
+        plt.xticks(x_pos, results_df['Model'].tolist(), rotation=45, ha='right', fontweight='bold')
         plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
         plt.grid(True, alpha=0.3)
     
-    # 3. Memory Usage Comparison (Middle Left) - FIXED LEGEND
+    # 3. Memory Usage Comparison (Middle Left)
     ax3 = plt.subplot(3, 2, 3)
     if 'Peak_Memory_Train_MB' in results_df.columns and 'Peak_Memory_Predict_MB' in results_df.columns:
         x_pos = np.arange(len(results_df))
@@ -392,15 +507,14 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
         plt.xlabel('Models', fontweight='bold')
         plt.ylabel('Memory (MB)', fontweight='bold')
         plt.title('Memory Usage Comparison', pad=20, fontweight='bold', fontsize=14)
-        plt.xticks(x_pos, results_df['Model'].tolist(), rotation=0, fontweight='bold')
-        # Legend di luar plot - kanan atas (FIXED!)
+        plt.xticks(x_pos, results_df['Model'].tolist(), rotation=45, ha='right', fontweight='bold')
         plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
         plt.grid(True, alpha=0.3)
     
     # 4. ROC Curves (Middle Right)
     ax4 = plt.subplot(3, 2, 4)
     try:
-        colors_roc = ['darkorange', 'cornflowerblue', 'green', 'red']
+        colors_roc = ['darkorange', 'cornflowerblue', 'green', 'red', 'purple', 'brown', 'pink']
         
         for idx, (model_name, model_obj) in enumerate(trained_models.items()):
             if hasattr(model_obj.named_steps['classifier'], 'predict_proba'):
@@ -408,7 +522,6 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
                     y_prob = model_obj.predict_proba(X_test)
                     
                     if len(np.unique(y_test)) > 2:
-                        # Multi-class ROC
                         n_classes = len(np.unique(y_test))
                         y_test_bin = label_binarize(y_test, classes=np.unique(y_test))
                         
@@ -420,7 +533,6 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
                             fpr[i], tpr[i], _ = roc_curve(y_test_bin[:, i], y_prob[:, i])
                             roc_auc[i] = auc(fpr[i], tpr[i])
                         
-                        # Compute micro-average ROC curve
                         fpr["micro"], tpr["micro"], _ = roc_curve(y_test_bin.ravel(), y_prob.ravel())
                         roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
                         
@@ -428,7 +540,6 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
                                 lw=3, alpha=0.8,
                                 label=f'{model_name} (AUC = {roc_auc["micro"]:.2f})')
                     else:
-                        # Binary classification
                         fpr, tpr, _ = roc_curve(y_test, y_prob[:, 1])
                         roc_auc_val = auc(fpr, tpr)
                         plt.plot(fpr, tpr, color=colors_roc[idx % len(colors_roc)], 
@@ -443,25 +554,24 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
         plt.xlabel('False Positive Rate', fontweight='bold')
         plt.ylabel('True Positive Rate', fontweight='bold')
         plt.title('ROC Curves', pad=20, fontweight='bold', fontsize=14)
-        # Legend di luar plot - kanan atas
-        plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
+        plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=8, frameon=True)
         plt.grid(True, alpha=0.3)
     except Exception as e:
         print(f"⚠️ ROC Curves error: {e}")
         plt.text(0.5, 0.5, 'ROC Curves\nError', 
                 ha='center', va='center', transform=ax4.transAxes, fontsize=12)
     
-    # 5. Confidence Distribution (Bottom Left) - FIXED NORMALIZATION!
+    # 5. Confidence Distribution (Bottom Left)
     ax5 = plt.subplot(3, 2, 5)
     try:
-        colors_conf = ['#ff7f0e', '#2ca02c', '#1f77b4', '#d62728']
+        colors_conf = ['#ff7f0e', '#2ca02c', '#1f77b4', '#d62728', '#9467bd', '#8c564b', '#e377c2']
         
-        # Store all confidence data for proper y-axis scaling
         all_confidence_data = []
         all_mean_values = []
+        legend_handles = []
+        legend_labels = []
         
         for idx, (model_name, model_obj) in enumerate(trained_models.items()):
-            # Try to get real confidence from model
             confidence_found = False
             max_confidence = None
             
@@ -475,7 +585,6 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
                 except Exception as e:
                     print(f"   ⚠️ Could not get probabilities for {model_name}: {e}")
             
-            # Fallback to synthetic data
             if not confidence_found or max_confidence is None:
                 row = results_df[results_df['Model'] == model_name].iloc[0]
                 max_confidence = generate_realistic_confidence(
@@ -489,60 +598,48 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
             all_confidence_data.append(max_confidence)
             mean_conf = np.mean(max_confidence)
             all_mean_values.append(mean_conf)
-        
-        # Plot histograms with normalized density (0-1 range)
-        for idx, (model_name, max_confidence) in enumerate(zip(trained_models.keys(), all_confidence_data)):
-            mean_conf = all_mean_values[idx]
             
-            # Plot histogram with density normalization
+            color = colors_conf[idx % len(colors_conf)]
+            
             counts, bins, patches = plt.hist(max_confidence, bins=30, alpha=0.6, 
-                   color=colors_conf[idx % len(colors_conf)],
-                   edgecolor='black', linewidth=1.2, range=(0, 1),
-                   density=False, label=f'{model_name}')
+                   color=color, edgecolor='black', linewidth=1.2, range=(0, 1),
+                   density=False)
             
-            # Normalize histogram heights to 0-1
             max_height = counts.max()
             if max_height > 0:
                 for patch in patches:
                     patch.set_height(patch.get_height() / max_height)
             
-            # Add KDE curve (also normalized)
+            from matplotlib.patches import Patch
+            hist_patch = Patch(facecolor=color, edgecolor='black', alpha=0.6, linewidth=1.2)
+            legend_handles.append(hist_patch)
+            legend_labels.append(f'{model_name} Distribution')
+            
             try:
                 if len(max_confidence) > 1 and np.std(max_confidence) > 0:
                     kde = gaussian_kde(max_confidence)
                     x_kde = np.linspace(0, 1, 200)
                     kde_values = kde(x_kde)
-                    
-                    # Normalize KDE to 0-1 range
                     kde_values_norm = kde_values / kde_values.max() if kde_values.max() > 0 else kde_values
-                    
-                    # Plot normalized KDE
                     plt.plot(x_kde, kde_values_norm, 
-                            color=colors_conf[idx % len(colors_conf)], 
-                            linewidth=2.5, alpha=0.9, linestyle='-')
-                    
-                    # Add vertical line for mean
-                    plt.axvline(mean_conf, color=colors_conf[idx % len(colors_conf)], 
-                              linestyle='--', alpha=0.7, linewidth=2)
+                            color=color, linewidth=2.5, alpha=0.9, linestyle='-')
             except Exception as e:
                 print(f"   ⚠️ KDE error for {model_name}: {e}")
-                # Just show mean line if KDE fails
-                plt.axvline(mean_conf, color=colors_conf[idx % len(colors_conf)], 
-                          linestyle='--', alpha=0.8, linewidth=2)
+            
+            mean_line = plt.axvline(mean_conf, color=color, 
+                          linestyle='--', alpha=0.7, linewidth=2.5)
+            legend_handles.append(mean_line)
+            legend_labels.append(f'{model_name} Mean: {mean_conf:.2f}')
         
         plt.xlabel('Prediction Confidence', fontweight='bold')
         plt.ylabel('Normalized Density (0-1)', fontweight='bold')
         plt.title('Confidence Distribution', pad=20, fontweight='bold', fontsize=14)
-        
-        # Create custom legend with mean values
-        legend_labels = [f'{model} (mean: {mean:.2f})' 
-                        for model, mean in zip(trained_models.keys(), all_mean_values)]
-        plt.legend(legend_labels, loc='upper left', bbox_to_anchor=(1.02, 1), 
-                  fontsize=8, frameon=True)
-        
+        plt.legend(legend_handles, legend_labels, 
+                  loc='upper left', bbox_to_anchor=(1.02, 1), 
+                  fontsize=7, frameon=True)
         plt.grid(True, alpha=0.3)
         plt.xlim(0, 1)
-        plt.ylim(0, 1.1)  # Set y-axis to 0-1 range
+        plt.ylim(0, 1.1)
         
     except Exception as e:
         print(f"⚠️ Confidence distribution error: {e}")
@@ -559,7 +656,7 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
             angles = np.linspace(0, 2*np.pi, len(available_metrics), endpoint=False).tolist()
             angles += angles[:1]
             
-            colors_radar = ['#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+            colors_radar = ['#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
             
             for i, (_, row) in enumerate(results_df.iterrows()):
                 values = [row[m] if not np.isnan(row[m]) else 0 for m in available_metrics]
@@ -573,10 +670,9 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
             ax6.set_xticklabels(available_metrics, fontsize=10, fontweight='bold')
             ax6.set_ylim(0, 1)
             ax6.set_title('Performance Radar Chart', pad=30, fontweight='bold', fontsize=14)
-            # Legend di luar plot - kanan atas
-            ax6.legend(loc='upper left', bbox_to_anchor=(1.3, 1.1), fontsize=9, frameon=True)
+            ax6.legend(loc='upper left', bbox_to_anchor=(1.3, 1.1), fontsize=8, frameon=True)
     
-    # Final layout - adjust for legends outside plots
+    # Final layout
     plt.tight_layout(rect=[0, 0, 0.95, 0.96])
     plt.suptitle(f'Comprehensive Analysis: {dataset_info["name"]}', 
                 fontsize=18, fontweight='bold', y=0.98)
@@ -596,7 +692,9 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
                          label_encoder=None,
                          output_dir=None,
                          create_plots=True,
-                         selected_models=None):
+                         selected_models=None,
+                         use_partial_fit=False,
+                         batch_size=1000):
     """
     Run complete training pipeline with visualization and memory tracking
     
@@ -620,6 +718,10 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
         Whether to create visualization plots
     selected_models : list, optional
         List of model names to train
+    use_partial_fit : bool, default=False
+        Use partial_fit for NaiveBayes and SGD (for large datasets)
+    batch_size : int, default=1000
+        Batch size for partial_fit training
         
     Returns:
     --------
@@ -629,6 +731,9 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
     print(f"Dataset: {dataset_name}")
     print(f"Train shape: {X_train.shape}, Test shape: {X_test.shape}")
     print(f"Classes: {len(np.unique(y_train))}")
+    print(f"Use Partial Fit: {use_partial_fit}")
+    if use_partial_fit:
+        print(f"Batch Size: {batch_size}")
     print("="*60)
     
     # Create output directory
@@ -640,7 +745,7 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
     os.makedirs(dataset_output_dir, exist_ok=True)
     
     # Create pipelines with selected models
-    models = create_ml_pipelines(selected_models=selected_models)
+    models = create_ml_pipelines(selected_models=selected_models, use_partial_fit=use_partial_fit)
     
     results = []
     all_predictions = []
@@ -665,13 +770,35 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
             mem_samples_train = []
             
             try:
-                pipeline.fit(X_train, y_train)
+                # Check if we should use partial_fit
+                supports_partial_fit = hasattr(pipeline, '_supports_partial_fit') and pipeline._supports_partial_fit
+                
+                if use_partial_fit and supports_partial_fit:
+                    # Scale data first
+                    X_train_scaled = pipeline.named_steps['scaler'].fit_transform(X_train)
+                    
+                    # Use partial_fit for classifier
+                    classifier = pipeline.named_steps['classifier']
+                    classifier = partial_fit_model(
+                        classifier, 
+                        X_train_scaled, 
+                        y_train, 
+                        batch_size=batch_size,
+                        model_name=model_name
+                    )
+                    
+                    # Update pipeline with trained classifier
+                    pipeline.named_steps['classifier'] = classifier
+                else:
+                    # Regular fit
+                    pipeline.fit(X_train, y_train)
+                
                 train_time = time.time() - start_time
                 
                 # Track memory during training
                 mem_samples_train.append(get_memory_usage())
                 current_mem, peak_mem = tracemalloc.get_traced_memory()
-                peak_mem_train = max(peak_mem_train, current_mem / 1024 / 1024)  # Convert to MB
+                peak_mem_train = max(peak_mem_train, current_mem / 1024 / 1024)
                 tracemalloc.stop()
                 
                 if mem_samples_train:
@@ -865,14 +992,39 @@ if __name__ == "__main__":
     )
     
     if data is not None:
-        # Run training with visualization
+        # Example 1: Train all models with regular fit
         results_df, best_model_name, best_model = run_training_pipeline(
             X_train=data['X_train'],
             X_test=data['X_test'],
             y_train=data['y_train'],
             y_test=data['y_test'],
-            dataset_name='my_dataset',
+            dataset_name='all_models_dataset',
             label_encoder=data['label_encoder'],
-            selected_models=['KNN', 'NaiveBayes'],
+            create_plots=True
+        )
+        
+        # Example 2: Train selected models
+        results_df, best_model_name, best_model = run_training_pipeline(
+            X_train=data['X_train'],
+            X_test=data['X_test'],
+            y_train=data['y_train'],
+            y_test=data['y_test'],
+            dataset_name='selected_models_dataset',
+            label_encoder=data['label_encoder'],
+            selected_models=['SVC', 'LightGBM', 'SGD'],
+            create_plots=True
+        )
+        
+        # Example 3: Large dataset with partial_fit
+        results_df, best_model_name, best_model = run_training_pipeline(
+            X_train=data['X_train'],
+            X_test=data['X_test'],
+            y_train=data['y_train'],
+            y_test=data['y_test'],
+            dataset_name='large_dataset',
+            label_encoder=data['label_encoder'],
+            selected_models=['NaiveBayes', 'SGD'],
+            use_partial_fit=True,  # Enable partial fit
+            batch_size=1000,  # Batch size for partial fit
             create_plots=True
         )
