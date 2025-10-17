@@ -310,7 +310,7 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
     def add_value_labels_multi_bars(ax, x_pos, values_list, width, bar_colors, offset=0.002):
         for i, values in enumerate(values_list):
             for j, (x, value) in enumerate(zip(x_pos + i*width, values)):
-                ax.text(x, value + offset, f'{value:.2f}',  # Changed to 2 decimals
+                ax.text(x, value + offset, f'{value:.2f}',
                        ha='center', va='bottom', fontweight='bold', 
                        fontsize=8, color='black')
     
@@ -348,7 +348,8 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
     plt.ylabel('Score', fontweight='bold')
     plt.title('Model Performance Comparison', pad=20, fontweight='bold', fontsize=14)
     plt.xticks(x_pos + width*2, results_df['Model'].tolist(), rotation=0, fontweight='bold')
-    plt.legend(loc='upper left', fontsize=9)
+    # Legend di luar plot - kanan atas
+    plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
     plt.grid(True, alpha=0.3)
     plt.ylim(0, 1.1)
     
@@ -363,17 +364,18 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
         pred_bars = plt.bar(x_pos + width/2, results_df['Predict_Time_Seconds'], width,
                           label='Prediction Time', alpha=0.8, color='lightcoral')
         
-        add_value_labels_single_bars(ax2, train_bars, decimals=2)  # 2 decimals for time
+        add_value_labels_single_bars(ax2, train_bars, decimals=2)
         add_value_labels_single_bars(ax2, pred_bars, decimals=2)
         
         plt.xlabel('Models', fontweight='bold')
         plt.ylabel('Time (seconds)', fontweight='bold')
         plt.title('Training vs Prediction Time', pad=20, fontweight='bold', fontsize=14)
         plt.xticks(x_pos, results_df['Model'].tolist(), rotation=0, fontweight='bold')
-        plt.legend(fontsize=9)
+        # Legend di luar plot - kanan atas
+        plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
         plt.grid(True, alpha=0.3)
     
-    # 3. Memory Usage Comparison (Middle Left)
+    # 3. Memory Usage Comparison (Middle Left) - FIXED LEGEND
     ax3 = plt.subplot(3, 2, 3)
     if 'Peak_Memory_Train_MB' in results_df.columns and 'Peak_Memory_Predict_MB' in results_df.columns:
         x_pos = np.arange(len(results_df))
@@ -384,14 +386,15 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
         pred_mem_bars = plt.bar(x_pos + width/2, results_df['Peak_Memory_Predict_MB'], width,
                               label='Peak Prediction Memory', alpha=0.8, color='orange')
         
-        add_value_labels_single_bars(ax3, train_mem_bars, offset=5, decimals=1)  # 1 decimal for memory
+        add_value_labels_single_bars(ax3, train_mem_bars, offset=5, decimals=1)
         add_value_labels_single_bars(ax3, pred_mem_bars, offset=5, decimals=1)
         
         plt.xlabel('Models', fontweight='bold')
         plt.ylabel('Memory (MB)', fontweight='bold')
         plt.title('Memory Usage Comparison', pad=20, fontweight='bold', fontsize=14)
         plt.xticks(x_pos, results_df['Model'].tolist(), rotation=0, fontweight='bold')
-        plt.legend(fontsize=9)
+        # Legend di luar plot - kanan atas (FIXED!)
+        plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
         plt.grid(True, alpha=0.3)
     
     # 4. ROC Curves (Middle Right)
@@ -423,34 +426,39 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
                         
                         plt.plot(fpr["micro"], tpr["micro"], color=colors_roc[idx % len(colors_roc)], 
                                 lw=3, alpha=0.8,
-                                label=f'{model_name} (AUC = {roc_auc["micro"]:.2f})')  # 2 decimals
+                                label=f'{model_name} (AUC = {roc_auc["micro"]:.2f})')
                     else:
                         # Binary classification
                         fpr, tpr, _ = roc_curve(y_test, y_prob[:, 1])
                         roc_auc_val = auc(fpr, tpr)
                         plt.plot(fpr, tpr, color=colors_roc[idx % len(colors_roc)], 
                                 lw=3, alpha=0.8,
-                                label=f'{model_name} (AUC = {roc_auc_val:.2f})')  # 2 decimals
+                                label=f'{model_name} (AUC = {roc_auc_val:.2f})')
                 except Exception as e:
                     print(f"   ⚠️ ROC curve error for {model_name}: {e}")
         
-        plt.plot([0, 1], [0, 1], 'k--', lw=2, alpha=0.5, label='Random (0.50)')  # 2 decimals
+        plt.plot([0, 1], [0, 1], 'k--', lw=2, alpha=0.5, label='Random (0.50)')
         plt.xlim([0.0, 1.0])
         plt.ylim([0.0, 1.05])
         plt.xlabel('False Positive Rate', fontweight='bold')
         plt.ylabel('True Positive Rate', fontweight='bold')
         plt.title('ROC Curves', pad=20, fontweight='bold', fontsize=14)
-        plt.legend(loc="lower right", fontsize=9)
+        # Legend di luar plot - kanan atas
+        plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
         plt.grid(True, alpha=0.3)
     except Exception as e:
         print(f"⚠️ ROC Curves error: {e}")
         plt.text(0.5, 0.5, 'ROC Curves\nError', 
                 ha='center', va='center', transform=ax4.transAxes, fontsize=12)
     
-    # 5. Confidence Distribution (Bottom Left) - FIXED!
+    # 5. Confidence Distribution (Bottom Left) - FIXED NORMALIZATION!
     ax5 = plt.subplot(3, 2, 5)
     try:
         colors_conf = ['#ff7f0e', '#2ca02c', '#1f77b4', '#d62728']
+        
+        # Store all confidence data for proper y-axis scaling
+        all_confidence_data = []
+        all_mean_values = []
         
         for idx, (model_name, model_obj) in enumerate(trained_models.items()):
             # Try to get real confidence from model
@@ -463,6 +471,7 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
                     max_confidence = np.max(y_prob, axis=1)
                     max_confidence = np.clip(max_confidence, 0, 1)
                     confidence_found = True
+                    print(f"   ℹ️  {model_name} - Real confidence range: [{max_confidence.min():.3f}, {max_confidence.max():.3f}], mean: {max_confidence.mean():.3f}")
                 except Exception as e:
                     print(f"   ⚠️ Could not get probabilities for {model_name}: {e}")
             
@@ -475,26 +484,42 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
                     row['F1_Macro'], 
                     n_samples=len(y_test)
                 )
+                print(f"   ℹ️  {model_name} - Synthetic confidence range: [{max_confidence.min():.3f}, {max_confidence.max():.3f}], mean: {max_confidence.mean():.3f}")
             
-            # Plot histogram with visible bars
-            n, bins, patches = plt.hist(max_confidence, bins=30, alpha=0.5, density=True,
-                   label=f'{model_name}', 
-                   color=colors_conf[idx % len(colors_conf)],
-                   edgecolor='black', linewidth=1.2, range=(0, 1))
-            
+            all_confidence_data.append(max_confidence)
             mean_conf = np.mean(max_confidence)
+            all_mean_values.append(mean_conf)
+        
+        # Plot histograms with normalized density (0-1 range)
+        for idx, (model_name, max_confidence) in enumerate(zip(trained_models.keys(), all_confidence_data)):
+            mean_conf = all_mean_values[idx]
             
-            # Add KDE curve
+            # Plot histogram with density normalization
+            counts, bins, patches = plt.hist(max_confidence, bins=30, alpha=0.6, 
+                   color=colors_conf[idx % len(colors_conf)],
+                   edgecolor='black', linewidth=1.2, range=(0, 1),
+                   density=False, label=f'{model_name}')
+            
+            # Normalize histogram heights to 0-1
+            max_height = counts.max()
+            if max_height > 0:
+                for patch in patches:
+                    patch.set_height(patch.get_height() / max_height)
+            
+            # Add KDE curve (also normalized)
             try:
                 if len(max_confidence) > 1 and np.std(max_confidence) > 0:
                     kde = gaussian_kde(max_confidence)
                     x_kde = np.linspace(0, 1, 200)
                     kde_values = kde(x_kde)
                     
-                    # Plot KDE with thicker line
-                    plt.plot(x_kde, kde_values, color=colors_conf[idx % len(colors_conf)], 
-                            linewidth=2.5, alpha=0.9, linestyle='-',
-                            label=f'{model_name} (mean: {mean_conf:.2f})')
+                    # Normalize KDE to 0-1 range
+                    kde_values_norm = kde_values / kde_values.max() if kde_values.max() > 0 else kde_values
+                    
+                    # Plot normalized KDE
+                    plt.plot(x_kde, kde_values_norm, 
+                            color=colors_conf[idx % len(colors_conf)], 
+                            linewidth=2.5, alpha=0.9, linestyle='-')
                     
                     # Add vertical line for mean
                     plt.axvline(mean_conf, color=colors_conf[idx % len(colors_conf)], 
@@ -503,15 +528,22 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
                 print(f"   ⚠️ KDE error for {model_name}: {e}")
                 # Just show mean line if KDE fails
                 plt.axvline(mean_conf, color=colors_conf[idx % len(colors_conf)], 
-                          linestyle='--', alpha=0.8, linewidth=2,
-                          label=f'{model_name} mean: {mean_conf:.2f}')
+                          linestyle='--', alpha=0.8, linewidth=2)
         
         plt.xlabel('Prediction Confidence', fontweight='bold')
-        plt.ylabel('Density', fontweight='bold')
+        plt.ylabel('Normalized Density (0-1)', fontweight='bold')
         plt.title('Confidence Distribution', pad=20, fontweight='bold', fontsize=14)
-        plt.legend(fontsize=8, loc='upper left')
+        
+        # Create custom legend with mean values
+        legend_labels = [f'{model} (mean: {mean:.2f})' 
+                        for model, mean in zip(trained_models.keys(), all_mean_values)]
+        plt.legend(legend_labels, loc='upper left', bbox_to_anchor=(1.02, 1), 
+                  fontsize=8, frameon=True)
+        
         plt.grid(True, alpha=0.3)
         plt.xlim(0, 1)
+        plt.ylim(0, 1.1)  # Set y-axis to 0-1 range
+        
     except Exception as e:
         print(f"⚠️ Confidence distribution error: {e}")
         import traceback
@@ -541,10 +573,11 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
             ax6.set_xticklabels(available_metrics, fontsize=10, fontweight='bold')
             ax6.set_ylim(0, 1)
             ax6.set_title('Performance Radar Chart', pad=30, fontweight='bold', fontsize=14)
-            ax6.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=9)
+            # Legend di luar plot - kanan atas
+            ax6.legend(loc='upper left', bbox_to_anchor=(1.3, 1.1), fontsize=9, frameon=True)
     
-    # Final layout
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    # Final layout - adjust for legends outside plots
+    plt.tight_layout(rect=[0, 0, 0.95, 0.96])
     plt.suptitle(f'Comprehensive Analysis: {dataset_info["name"]}', 
                 fontsize=18, fontweight='bold', y=0.98)
     
