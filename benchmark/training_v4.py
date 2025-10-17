@@ -16,8 +16,6 @@ import seaborn as sns
 from scipy.stats import gaussian_kde
 from itertools import cycle
 import warnings
-import psutil
-import tracemalloc
 warnings.filterwarnings('ignore')
 
 # ML Libraries
@@ -160,6 +158,17 @@ def create_ml_pipelines(selected_models=None):
     Returns:
     --------
     dict : Dictionary of selected model pipelines
+    
+    Examples:
+    ---------
+    # Use only KNN and NaiveBayes
+    models = create_ml_pipelines(['KNN', 'NaiveBayes'])
+    
+    # Use only XGBoost
+    models = create_ml_pipelines(['XGBoost'])
+    
+    # Use all models (default)
+    models = create_ml_pipelines()
     """
     
     # Define all available models
@@ -216,14 +225,8 @@ def create_ml_pipelines(selected_models=None):
     return selected
 
 
-def get_memory_usage():
-    """Get current memory usage in MB"""
-    process = psutil.Process()
-    return process.memory_info().rss / 1024 / 1024  # Convert to MB
-
-
 def evaluate_model(model, X_test, y_test, model_name, label_encoder=None):
-    """Evaluate model and return metrics with predictions and probabilities"""
+    """Evaluate model and return metrics"""
     print(f"\n📊 Evaluating {model_name}...")
     
     y_pred = model.predict(X_test)
@@ -236,17 +239,15 @@ def evaluate_model(model, X_test, y_test, model_name, label_encoder=None):
         'Precision_Macro': precision_score(y_test, y_pred, average='macro', zero_division=0)
     }
     
-    # Get prediction probabilities
-    y_proba = None
     if hasattr(model.named_steps['classifier'], 'predict_proba'):
         try:
-            y_proba = model.predict_proba(X_test)
+            y_prob = model.predict_proba(X_test)
             if len(np.unique(y_test)) > 2:
-                metrics['ROC_AUC'] = roc_auc_score(y_test, y_proba, 
+                metrics['ROC_AUC'] = roc_auc_score(y_test, y_prob, 
                                                    multi_class='ovr', 
                                                    average='macro')
             else:
-                metrics['ROC_AUC'] = roc_auc_score(y_test, y_proba[:, 1])
+                metrics['ROC_AUC'] = roc_auc_score(y_test, y_prob[:, 1])
         except Exception as e:
             print(f"   ⚠️ Could not calculate ROC AUC: {e}")
             metrics['ROC_AUC'] = np.nan
@@ -258,7 +259,7 @@ def evaluate_model(model, X_test, y_test, model_name, label_encoder=None):
     if not np.isnan(metrics['ROC_AUC']):
         print(f"   ✅ ROC AUC: {metrics['ROC_AUC']:.4f}")
     
-    return metrics, y_pred, y_proba
+    return metrics, y_pred
 
 
 def generate_realistic_confidence(model_name, accuracy, f1_score, n_samples=100):
@@ -369,43 +370,23 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_te
         plt.legend(fontsize=9)
         plt.grid(True, alpha=0.3)
     
-    # 3. Memory Usage Comparison (NEW!)
+    # 3. ROC AUC Heatmap
     ax3 = plt.subplot(3, 4, 3)
-    if 'Peak_Memory_Train_MB' in results_df.columns and 'Peak_Memory_Predict_MB' in results_df.columns:
-        x_pos = np.arange(len(results_df))
-        width = 0.35
-        
-        train_mem_bars = plt.bar(x_pos - width/2, results_df['Peak_Memory_Train_MB'], width,
-                               label='Peak Training Memory', alpha=0.8, color='gold')
-        pred_mem_bars = plt.bar(x_pos + width/2, results_df['Peak_Memory_Predict_MB'], width,
-                              label='Peak Prediction Memory', alpha=0.8, color='orange')
-        
-        add_value_labels_single_bars(ax3, train_mem_bars, offset=1)
-        add_value_labels_single_bars(ax3, pred_mem_bars, offset=1)
-        
-        plt.xlabel('Models', fontweight='bold')
-        plt.ylabel('Memory (MB)', fontweight='bold')
-        plt.title('Memory Usage Comparison', pad=25, fontweight='bold', fontsize=14)
-        plt.xticks(x_pos, results_df['Model'].tolist(), rotation=0, fontweight='bold')
-        plt.legend(fontsize=9)
-        plt.grid(True, alpha=0.3)
-    else:
-        # ROC AUC Heatmap as fallback
-        roc_data = []
-        model_names = []
-        
-        for _, row in results_df.iterrows():
-            model_names.append(row['Model'])
-            roc_data.append(row['ROC_AUC'] if not np.isnan(row['ROC_AUC']) else 0.5)
-        
-        heatmap_data = np.array(roc_data).reshape(1, -1)
-        sns.heatmap(heatmap_data, 
-                   xticklabels=model_names, 
-                   yticklabels=['ROC AUC'],
-                   annot=True, fmt='.4f', cmap='RdYlGn',
-                   center=0.8, vmin=0.5, vmax=1.0)
-        plt.title('ROC AUC Heatmap', pad=25, fontweight='bold', fontsize=14)
-        plt.xlabel('Models', fontweight='bold')
+    roc_data = []
+    model_names = []
+    
+    for _, row in results_df.iterrows():
+        model_names.append(row['Model'])
+        roc_data.append(row['ROC_AUC'] if not np.isnan(row['ROC_AUC']) else 0.5)
+    
+    heatmap_data = np.array(roc_data).reshape(1, -1)
+    sns.heatmap(heatmap_data, 
+               xticklabels=model_names, 
+               yticklabels=['ROC AUC'],
+               annot=True, fmt='.4f', cmap='RdYlGn',
+               center=0.8, vmin=0.5, vmax=1.0)
+    plt.title('ROC AUC Heatmap', pad=25, fontweight='bold', fontsize=14)
+    plt.xlabel('Models', fontweight='bold')
     
     # 4. ROC Curves
     ax4 = plt.subplot(3, 4, 4)
@@ -567,7 +548,7 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
                          create_plots=True,
                          selected_models=None):
     """
-    Run complete training pipeline with visualization and memory tracking
+    Run complete training pipeline with visualization
     
     Parameters:
     -----------
@@ -588,11 +569,31 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
     create_plots : bool, default=True
         Whether to create visualization plots
     selected_models : list, optional
-        List of model names to train
+        List of model names to train. Options: ['KNN', 'NaiveBayes', 'RandomForest', 'XGBoost']
+        If None, all models will be trained.
         
     Returns:
     --------
     tuple : (results_df, best_model_name, best_model_pipeline)
+    
+    Examples:
+    ---------
+    # Train only KNN and NaiveBayes
+    results_df, best_name, best_model = run_training_pipeline(
+        X_train, X_test, y_train, y_test,
+        selected_models=['KNN', 'NaiveBayes']
+    )
+    
+    # Train only XGBoost
+    results_df, best_name, best_model = run_training_pipeline(
+        X_train, X_test, y_train, y_test,
+        selected_models=['XGBoost']
+    )
+    
+    # Train all models
+    results_df, best_name, best_model = run_training_pipeline(
+        X_train, X_test, y_train, y_test
+    )
     """
     print(f"\n🚀 **TRAINING PIPELINE**")
     print(f"Dataset: {dataset_name}")
@@ -613,50 +614,29 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
     
     results = []
     all_predictions = []
-    all_probabilities = []
     trained_models = {}
     
     for model_name, pipeline in tqdm(models.items(), desc="Training models"):
         model_path = os.path.join(dataset_output_dir, f"{model_name}_model.pkl")
-        
-        # Initialize memory tracking
-        mem_before_train = get_memory_usage()
-        peak_mem_train = mem_before_train
-        avg_mem_train = mem_before_train
         
         # Training
         if not os.path.exists(model_path):
             print(f"\n⏳ Training {model_name}...")
             start_time = time.time()
             
-            # Start memory tracking
-            tracemalloc.start()
-            mem_samples_train = []
-            
             try:
                 pipeline.fit(X_train, y_train)
                 train_time = time.time() - start_time
                 
-                # Track memory during training
-                mem_samples_train.append(get_memory_usage())
-                current_mem, peak_mem = tracemalloc.get_traced_memory()
-                peak_mem_train = max(peak_mem_train, current_mem / 1024 / 1024)  # Convert to MB
-                tracemalloc.stop()
-                
-                if mem_samples_train:
-                    avg_mem_train = np.mean(mem_samples_train)
-                
                 # Save model
                 joblib.dump(pipeline, model_path)
                 print(f"✅ Model saved: {model_path}")
-                print(f"   💾 Peak Memory (Train): {peak_mem_train:.2f} MB")
                 
                 trained_models[model_name] = pipeline
             except Exception as e:
                 print(f"❌ Error training {model_name}: {e}")
                 import traceback
                 traceback.print_exc()
-                tracemalloc.stop()
                 continue
         else:
             print(f"\n📂 Loading {model_name}...")
@@ -668,36 +648,15 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
                 print(f"❌ Error loading {model_name}: {e}")
                 continue
         
-        # Evaluation with memory tracking
-        mem_before_pred = get_memory_usage()
-        peak_mem_pred = mem_before_pred
-        avg_mem_pred = mem_before_pred
-        
+        # Evaluation
         start_pred_time = time.time()
-        tracemalloc.start()
-        mem_samples_pred = []
-        
         try:
-            metrics, y_pred, y_proba = evaluate_model(pipeline, X_test, y_test, 
-                                                     model_name, label_encoder)
+            metrics, y_pred = evaluate_model(pipeline, X_test, y_test, 
+                                           model_name, label_encoder)
             pred_time = time.time() - start_pred_time
             
-            # Track memory during prediction
-            mem_samples_pred.append(get_memory_usage())
-            current_mem, peak_mem = tracemalloc.get_traced_memory()
-            peak_mem_pred = max(peak_mem_pred, current_mem / 1024 / 1024)
-            tracemalloc.stop()
-            
-            if mem_samples_pred:
-                avg_mem_pred = np.mean(mem_samples_pred)
-            
-            # Add timing and memory metrics
             metrics['Train_Time_Seconds'] = round(train_time, 3)
             metrics['Predict_Time_Seconds'] = round(pred_time, 3)
-            metrics['Peak_Memory_Train_MB'] = round(peak_mem_train, 2)
-            metrics['Avg_Memory_Train_MB'] = round(avg_mem_train, 2)
-            metrics['Peak_Memory_Predict_MB'] = round(peak_mem_pred, 2)
-            metrics['Avg_Memory_Predict_MB'] = round(avg_mem_pred, 2)
             
             results.append(metrics)
             
@@ -717,32 +676,10 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
             
             all_predictions.append(pred_df)
             
-            # Store probabilities
-            if y_proba is not None:
-                proba_df = pd.DataFrame(y_proba, 
-                                       columns=[f'Class_{i}_Prob' for i in range(y_proba.shape[1])])
-                proba_df.insert(0, 'Model', model_name)
-                proba_df.insert(1, 'True_Label', y_test)
-                proba_df.insert(2, 'Pred_Label', y_pred)
-                
-                if label_encoder is not None:
-                    try:
-                        proba_df.insert(3, 'True_Label_Original', 
-                                      label_encoder.inverse_transform(y_test))
-                        proba_df.insert(4, 'Pred_Label_Original', 
-                                      label_encoder.inverse_transform(y_pred))
-                    except:
-                        pass
-                
-                all_probabilities.append(proba_df)
-            
-            print(f"   💾 Peak Memory (Predict): {peak_mem_pred:.2f} MB")
-            
         except Exception as e:
             print(f"❌ Error evaluating {model_name}: {e}")
             import traceback
             traceback.print_exc()
-            tracemalloc.stop()
             continue
         
         gc.collect()
@@ -750,25 +687,15 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
     # Save results
     if results:
         results_df = pd.DataFrame(results)
+        results_path = os.path.join(dataset_output_dir, f"evaluation.csv")
+        results_df.to_csv(results_path, index=False)
+        print(f"\n✅ Results saved: {results_path}")
         
-        # Save summary with memory metrics
-        summary_path = os.path.join(dataset_output_dir, f"summary.csv")
-        results_df.to_csv(summary_path, index=False)
-        print(f"\n✅ Summary saved: {summary_path}")
-        
-        # Save predictions
         if all_predictions:
             predictions_df = pd.concat(all_predictions, ignore_index=True)
             pred_path = os.path.join(dataset_output_dir, f"predictions.csv")
             predictions_df.to_csv(pred_path, index=False)
             print(f"✅ Predictions saved: {pred_path}")
-        
-        # Save probabilities
-        if all_probabilities:
-            probabilities_df = pd.concat(all_probabilities, ignore_index=True)
-            proba_path = os.path.join(dataset_output_dir, f"prediction_probabilities.csv")
-            probabilities_df.to_csv(proba_path, index=False)
-            print(f"✅ Prediction probabilities saved: {proba_path}")
         
         # Print summary
         print(f"\n📊 **TRAINING COMPLETED**")
@@ -779,8 +706,6 @@ def run_training_pipeline(X_train, X_test, y_train, y_test,
         best_model_name = best_model_row['Model']
         
         print(f"\n🏆 Best Model: {best_model_name} (F1: {best_model_row['F1_Macro']:.4f})")
-        print(f"   💾 Peak Memory: {best_model_row['Peak_Memory_Train_MB']:.2f} MB (Train), "
-              f"{best_model_row['Peak_Memory_Predict_MB']:.2f} MB (Predict)")
         
         # Save best model
         if best_model_name in trained_models:
@@ -842,6 +767,6 @@ if __name__ == "__main__":
             y_test=data['y_test'],
             dataset_name='my_dataset',
             label_encoder=data['label_encoder'],
-            selected_models=['KNN', 'NaiveBayes'],
-            create_plots=True
+            output_dir='/kaggle/working/FASTA-KmerReduce/rki_2025/model',
+            create_plots=True  # Set to False to skip visualization
         )
