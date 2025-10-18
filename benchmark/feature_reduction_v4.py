@@ -112,13 +112,6 @@ class BenchmarkConfig:
         step_components: int = 50,
         max_components: int = 1000,
         
-        # 🆕 SAMPLING PARAMETERS
-        enable_sampling: bool = False,  # Enable stratified sampling
-        sampling_kmer_threshold: int = 8,  # Apply sampling for k >= 8
-        sampling_percentage: float = 0.1,  # 10% per class
-        min_samples_per_class: int = 2,  # Minimum samples to keep class
-        max_samples_per_class: int = None,  # Optional max limit
-
         # Processing parameters - MEMORY SAFE DEFAULTS
         batch_size: int = None,  # Auto-calculate
         cv_folds: int = 2,
@@ -163,13 +156,6 @@ class BenchmarkConfig:
         self.umap_neighbors = umap_neighbors
         self.enable_memory_monitoring = enable_memory_monitoring
         self.emergency_stop_threshold = emergency_stop_threshold
-
-        # 🆕 Sampling config
-        self.enable_sampling = enable_sampling
-        self.sampling_kmer_threshold = sampling_kmer_threshold
-        self.sampling_percentage = sampling_percentage
-        self.min_samples_per_class = min_samples_per_class
-        self.max_samples_per_class = max_samples_per_class
 
 # =================================================================
 # 2. DATA LOADER WITH MEMORY CHECKS
@@ -223,184 +209,6 @@ class DataLoader:
         
         return X, y
 
-# =================================================================
-# 3. STRATIFIED SAMPLING BARIS JIKA KMER > 8
-# =================================================================
-class StratifiedSampler:
-    """
-    Stratified sampling untuk large k-mer datasets
-    """
-    
-    def __init__(self, config: BenchmarkConfig):
-        self.config = config
-    
-    def should_sample(self, kmer: int) -> bool:
-        """Check if sampling should be applied"""
-        return (
-            self.config.enable_sampling and 
-            kmer >= self.config.sampling_kmer_threshold
-        )
-    
-    def sample_data(self, X, y, kmer: int, level: str, split: str = 'train'):
-        """
-        Perform stratified sampling per class
-        
-        Args:
-            X: Sparse feature matrix
-            y: Label array
-            kmer: K-mer size
-            level: Taxonomic level
-            split: 'train' or 'test'
-            
-        Returns:
-            X_sampled, y_sampled: Sampled data
-            sampling_info: Dict with sampling statistics
-        """
-        
-        if not self.should_sample(kmer):
-            print(f"   ℹ️  No sampling (k-mer {kmer} < threshold {self.config.sampling_kmer_threshold})")
-            return X, y, None
-        
-        print(f"\n{'='*60}")
-        print(f"🎲 STRATIFIED SAMPLING ACTIVATED")
-        print(f"{'='*60}")
-        print(f"   K-mer: {kmer} >= {self.config.sampling_kmer_threshold}")
-        print(f"   Level: {level}")
-        print(f"   Split: {split}")
-        print(f"   Original shape: {X.shape}")
-        print(f"   Target sampling: {self.config.sampling_percentage*100:.1f}% per class")
-        print(f"   Min samples per class: {self.config.min_samples_per_class}")
-        
-        # Get unique classes
-        unique_classes, class_counts = np.unique(y, return_counts=True)
-        n_classes = len(unique_classes)
-        
-        print(f"\n📊 CLASS DISTRIBUTION:")
-        print(f"   Total classes: {n_classes}")
-        print(f"   Total samples: {len(y):,}")
-        
-        # Categorize classes
-        small_classes = []  # < min_samples_per_class
-        valid_classes = []  # >= min_samples_per_class
-        
-        for cls, count in zip(unique_classes, class_counts):
-            if count < self.config.min_samples_per_class:
-                small_classes.append((cls, count))
-            else:
-                valid_classes.append((cls, count))
-        
-        print(f"\n   Classes with >= {self.config.min_samples_per_class} samples: {len(valid_classes)}")
-        print(f"   Classes with < {self.config.min_samples_per_class} samples: {len(small_classes)}")
-        
-        if small_classes:
-            print(f"\n   ⚠️  Small classes (will be SKIPPED):")
-            for cls, count in small_classes[:10]:  # Show first 10
-                print(f"      Class {cls}: {count} samples")
-            if len(small_classes) > 10:
-                print(f"      ... and {len(small_classes)-10} more")
-        
-        # Perform stratified sampling
-        sampled_indices = []
-        sampling_stats = []
-        skipped_classes = []
-        
-        print(f"\n🔄 Sampling per class...")
-        
-        for cls, original_count in tqdm(zip(unique_classes, class_counts), 
-                                       total=n_classes, 
-                                       desc="Sampling classes"):
-            
-            # Skip small classes
-            if original_count < self.config.min_samples_per_class:
-                skipped_classes.append(cls)
-                continue
-            
-            # Get indices for this class
-            class_mask = (y == cls)
-            class_indices = np.where(class_mask)[0]
-            
-            # Calculate target sample size
-            target_samples = max(
-                self.config.min_samples_per_class,
-                int(original_count * self.config.sampling_percentage)
-            )
-            
-            # Apply max limit if specified
-            if self.config.max_samples_per_class is not None:
-                target_samples = min(target_samples, self.config.max_samples_per_class)
-            
-            # Don't sample more than available
-            target_samples = min(target_samples, original_count)
-            
-            # Random sampling
-            if target_samples < original_count:
-                sampled_class_indices = np.random.choice(
-                    class_indices, 
-                    size=target_samples, 
-                    replace=False
-                )
-            else:
-                sampled_class_indices = class_indices
-            
-            sampled_indices.extend(sampled_class_indices)
-            
-            # Track statistics
-            sampling_stats.append({
-                'class': cls,
-                'original': original_count,
-                'sampled': len(sampled_class_indices),
-                'percentage': (len(sampled_class_indices) / original_count) * 100
-            })
-        
-        # Sort indices to maintain some order
-        sampled_indices = np.sort(sampled_indices)
-        
-        # Extract sampled data
-        X_sampled = X[sampled_indices]
-        y_sampled = y[sampled_indices]
-        
-        # Calculate statistics
-        total_original = len(y)
-        total_sampled = len(sampled_indices)
-        reduction_percent = (1 - total_sampled / total_original) * 100
-        
-        sampling_info = {
-            'original_samples': total_original,
-            'sampled_samples': total_sampled,
-            'reduction_percent': reduction_percent,
-            'original_classes': n_classes,
-            'valid_classes': len(valid_classes),
-            'skipped_classes': len(skipped_classes),
-            'per_class_stats': sampling_stats,
-            'skipped_class_ids': skipped_classes
-        }
-        
-        # Print summary
-        print(f"\n{'='*60}")
-        print(f"✅ SAMPLING COMPLETED")
-        print(f"{'='*60}")
-        print(f"   Original: {total_original:,} samples, {n_classes} classes")
-        print(f"   Sampled:  {total_sampled:,} samples, {len(valid_classes)} classes")
-        print(f"   Reduction: {reduction_percent:.2f}%")
-        print(f"   Skipped: {len(skipped_classes)} classes (< {self.config.min_samples_per_class} samples)")
-        
-        # Show per-class statistics (first 10)
-        if sampling_stats:
-            print(f"\n📊 PER-CLASS SAMPLING (showing first 10):")
-            stats_df = pd.DataFrame(sampling_stats[:10])
-            print(stats_df.to_string(index=False))
-            
-            if len(sampling_stats) > 10:
-                print(f"   ... and {len(sampling_stats)-10} more classes")
-            
-            # Overall statistics
-            avg_sampling = np.mean([s['percentage'] for s in sampling_stats])
-            print(f"\n   Average sampling per class: {avg_sampling:.2f}%")
-        
-        MemoryManager.force_gc()
-        
-        return X_sampled, y_sampled, sampling_info
-    
 # =================================================================
 # 3. PLOTTING MANAGER WITH MEMORY SAFETY - ENHANCED
 # =================================================================
@@ -1024,7 +832,6 @@ class SimplifiedBenchmark:
         self.config = config
         self.output_mgr = OutputManager(config.output_dir, config.skip_existing)
         self.plotter = PlottingManager(config) if config.create_plots else None
-        self.sampler = StratifiedSampler(config)  # 🆕 Add sampler
         self.results = []
         
     def _check_memory_emergency(self):
@@ -1247,14 +1054,9 @@ class SimplifiedBenchmark:
         MemoryManager.log_memory("After saving results")
     
     def run(self, loader: DataLoader):
-        """Main benchmark loop - WITH STRATIFIED SAMPLING"""
-        print("🚀 Starting Memory-Safe Benchmark with Stratified Sampling")
+        """Main benchmark loop - FIXED NO DATA LEAKAGE"""
+        print("🚀 Starting Memory-Safe Benchmark (NO DATA LEAKAGE)")
         print(f"⚙️  Max memory per operation: {self.config.max_memory_gb}GB")
-        
-        if self.config.enable_sampling:
-            print(f"🎲 Sampling enabled for k-mer >= {self.config.sampling_kmer_threshold}")
-            print(f"   Target: {self.config.sampling_percentage*100:.1f}% per class")
-            print(f"   Min samples: {self.config.min_samples_per_class}")
         
         MemoryManager.log_memory("Initial")
         
@@ -1265,23 +1067,10 @@ class SimplifiedBenchmark:
                 
                 try:
                     # ✅ LOAD BOTH TRAIN & TEST
-                    X_train_full, y_train_full = loader.load_data(level, kmer, 'train')
-                    X_test_full, y_test_full = loader.load_data(level, kmer, 'test')
-                    print(f"✅ Train data loaded: {X_train_full.shape}")
-                    print(f"✅ Test data loaded: {X_test_full.shape}")
-                    
-                    # 🆕 APPLY SAMPLING IF ENABLED
-                    X_train, y_train, train_sampling_info = self.sampler.sample_data(
-                        X_train_full, y_train_full, kmer, level, split='train'
-                    )
-                    
-                    X_test, y_test, test_sampling_info = self.sampler.sample_data(
-                        X_test_full, y_test_full, kmer, level, split='test'
-                    )
-                    
-                    # Clean up full data
-                    del X_train_full, y_train_full, X_test_full, y_test_full
-                    MemoryManager.force_gc()
+                    X_train, y_train = loader.load_data(level, kmer, 'train')
+                    X_test, y_test = loader.load_data(level, kmer, 'test')
+                    print(f"✅ Train data loaded: {X_train.shape}")
+                    print(f"✅ Test data loaded: {X_test.shape}")
                     
                     for method in self.config.methods:
                         print(f"\n🔧 Method: {method.upper()}")
@@ -1295,9 +1084,9 @@ class SimplifiedBenchmark:
                             memory_samples.append(mem_start['rss_gb'])
                             
                             # =================================================
-                            # STEP 1: FIND OPTIMAL COMPONENTS (SAMPLED TRAIN)
+                            # STEP 1: FIND OPTIMAL COMPONENTS (TRAIN ONLY!)
                             # =================================================
-                            print(f"\n📊 Step 1: Finding optimal components on {'SAMPLED ' if train_sampling_info else ''}TRAIN data...")
+                            print(f"\n📊 Step 1: Finding optimal components on TRAIN data ONLY...")
                             n_comp, variance_ratio, train_cev, fitted_model = self.find_optimal_components(
                                 X_train, y_train, method
                             )
@@ -1308,7 +1097,7 @@ class SimplifiedBenchmark:
                             memory_samples.append(mem_after_opt['rss_gb'])
                             
                             # =================================================
-                            # STEP 2: TRANSFORM TRAIN DATA
+                            # STEP 2: TRANSFORM TRAIN DATA (using fitted model)
                             # =================================================
                             print(f"\n🔄 Step 2: Transforming TRAIN data...")
                             X_train_transformed = self._transform_with_model(
@@ -1319,12 +1108,17 @@ class SimplifiedBenchmark:
                             memory_samples.append(mem_after_train_transform['rss_gb'])
                             
                             # =================================================
-                            # STEP 3: TRANSFORM TEST DATA
+                            # STEP 3: TRANSFORM TEST DATA (NO FITTING!)
                             # =================================================
-                            print(f"\n🔄 Step 3: Transforming TEST data...")
+                            print(f"\n🔄 Step 3: Transforming TEST data (using TRAINED model - NO FITTING)...")
+                            print(f"   🛡️  Preventing data leakage - TEST is only transformed!")
                             X_test_transformed = self._transform_with_model(
                                 X_test, fitted_model, method
                             )
+                            
+                            # ❌ NO CEV FOR TEST - PREVENT DATA LEAKAGE!
+                            print(f"   ✅ Test data transformed (shape: {X_test_transformed.shape})")
+                            print(f"   🛡️  NO CEV calculated for test - preventing data leakage!")
                             
                             mem_after_test_transform = MemoryManager.get_memory_info()
                             memory_samples.append(mem_after_test_transform['rss_gb'])
@@ -1336,7 +1130,7 @@ class SimplifiedBenchmark:
                             peak_memory_gb = np.max(memory_samples)
                             
                             # =================================================
-                            # STEP 4: SAVE RESULTS WITH SAMPLING INFO
+                            # STEP 4: SAVE BOTH TRAIN & TEST
                             # =================================================
                             print(f"\n💾 Step 4: Saving results...")
                             
@@ -1351,121 +1145,75 @@ class SimplifiedBenchmark:
                                 X_test_transformed, y_test, method, level, kmer, 
                                 fold=0, split='test'
                             )
-                            
-                            # 🆕 Save sampling info if available
-                            if train_sampling_info:
-                                output_dir = self.output_mgr.get_output_dir(level, kmer, method)
-                                
-                                # Save train sampling stats
-                                sampling_df = pd.DataFrame(train_sampling_info['per_class_stats'])
-                                sampling_file = output_dir / "sampling_stats_train.csv"
-                                sampling_df.to_csv(sampling_file, index=False)
-                                print(f"   💾 Train sampling stats: {sampling_file}")
-                                
-                                # Save summary
-                                summary_dict = {
-                                    'original_samples': train_sampling_info['original_samples'],
-                                    'sampled_samples': train_sampling_info['sampled_samples'],
-                                    'reduction_percent': train_sampling_info['reduction_percent'],
-                                    'original_classes': train_sampling_info['original_classes'],
-                                    'valid_classes': train_sampling_info['valid_classes'],
-                                    'skipped_classes': train_sampling_info['skipped_classes']
-                                }
-                                
-                                summary_file = output_dir / "sampling_summary_train.txt"
-                                with open(summary_file, 'w') as f:
-                                    for key, value in summary_dict.items():
-                                        f.write(f"{key}: {value}\n")
-                                print(f"   💾 Train sampling summary: {summary_file}")
-                            
-                            if test_sampling_info:
-                                output_dir = self.output_mgr.get_output_dir(level, kmer, method)
-                                
-                                # Save test sampling stats
-                                sampling_df = pd.DataFrame(test_sampling_info['per_class_stats'])
-                                sampling_file = output_dir / "sampling_stats_test.csv"
-                                sampling_df.to_csv(sampling_file, index=False)
-                                print(f"   💾 Test sampling stats: {sampling_file}")
 
                             # =================================================
-                            # STEP 5: CREATE PLOTS
+                            # STEP 5: CREATE PLOTS (ENHANCED)
                             # =================================================
                             if self.plotter:
                                 output_dir = self.output_mgr.get_output_dir(level, kmer, method)
                                 print(f"\n📊 Step 5: Creating enhanced plots...")
                                 
-                                # Variance Explained
+                                # 1. Variance Explained
                                 if variance_ratio is not None:
                                     self.plotter.plot_variance_explained(
                                         variance_ratio, n_comp, level, kmer, method, output_dir
                                     )
                                 
-                                # PCA Feature Space - TRAIN
+                                # 2. 🎨 PCA Feature Space - TRAIN (SEMUA LABEL!)
+                                print(f"   🎨 Creating PCA feature space plot (TRAIN - ALL LABELS)...")
                                 self.plotter.plot_pca_feature_space_all_labels(
                                     X_train_transformed, y_train, level, kmer, 
                                     method, output_dir, split='train'
                                 )
                                 
-                                # PCA Feature Space - TEST
+                                # 3. 🎨 PCA Feature Space - TEST (SEMUA LABEL!)
+                                print(f"   🎨 Creating PCA feature space plot (TEST - ALL LABELS)...")
                                 self.plotter.plot_pca_feature_space_all_labels(
                                     X_test_transformed, y_test, level, kmer, 
                                     method, output_dir, split='test'
                                 )
                                 
-                                # 3D Feature Space - TRAIN
+                                # 4. 🎨 3D Feature Space - TRAIN (BONUS)
                                 if X_train_transformed.shape[1] >= 3:
+                                    print(f"   🎨 Creating 3D PCA feature space plot (TRAIN)...")
                                     self.plotter.plot_pca_feature_space_3d(
                                         X_train_transformed, y_train, level, kmer, 
                                         method, output_dir, split='train'
                                     )
                                 
-                                # Class Separation Heatmap
+                                # 5. 🎨 Class Separation Heatmap - TRAIN
+                                print(f"   🎨 Creating class separation heatmap (TRAIN)...")
                                 self.plotter.plot_class_separation_heatmap(
                                     X_train_transformed, y_train, level, kmer, 
                                     method, output_dir, split='train'
                                 )
                                 
-                                # Component Distribution
+                                # 6. Component Distribution
                                 self.plotter.plot_component_distribution(
                                     X_train_transformed, level, kmer, method, output_dir
                                 )
+                                
+                                print(f"   ✅ All plots created successfully!")
 
                             # =================================================
-                            # STEP 6: SAVE METRICS
+                            # STEP 6: SAVE METRICS (NO TEST CEV!)
                             # =================================================
-                            result_dict = {
+                            self.results.append({
                                 'level': level,
                                 'kmer': kmer,
                                 'method': method,
                                 'n_components': n_comp,
                                 'train_cev_score': train_cev,
+                                # ❌ NO test_cev_score - PREVENT DATA LEAKAGE!
                                 'avg_memory_gb': avg_memory_gb,
                                 'peak_memory_gb': peak_memory_gb,
                                 'time_seconds': elapsed
-                            }
-                            
-                            # 🆕 Add sampling info to results
-                            if train_sampling_info:
-                                result_dict.update({
-                                    'sampling_enabled': True,
-                                    'original_train_samples': train_sampling_info['original_samples'],
-                                    'sampled_train_samples': train_sampling_info['sampled_samples'],
-                                    'train_reduction_percent': train_sampling_info['reduction_percent'],
-                                    'original_classes': train_sampling_info['original_classes'],
-                                    'valid_classes': train_sampling_info['valid_classes'],
-                                    'skipped_classes': train_sampling_info['skipped_classes']
-                                })
-                            else:
-                                result_dict['sampling_enabled'] = False
-                            
-                            self.results.append(result_dict)
+                            })
                             
                             print(f"\n✅ SUCCESS: {method} completed!")
                             print(f"   📊 Train CEV Score: {train_cev:.4f}")
-                            if train_sampling_info:
-                                print(f"   🎲 Sampled: {train_sampling_info['sampled_samples']:,} / "
-                                      f"{train_sampling_info['original_samples']:,} samples "
-                                      f"({train_sampling_info['reduction_percent']:.1f}% reduction)")
+                            print(f"   🛡️  Test CEV: NOT CALCULATED (preventing data leakage)")
+                            print(f"   🧠 Avg Memory: {avg_memory_gb:.2f}GB")
                             print(f"   🧠 Peak Memory: {peak_memory_gb:.2f}GB")
                             print(f"   ⏱️  Time: {elapsed:.2f}s")
                             
@@ -1502,9 +1250,18 @@ class SimplifiedBenchmark:
         # Print summary statistics
         if len(summary_df) > 0:
             print(f"\n{'='*60}")
-            print("📊 BENCHMARK SUMMARY")
+            print("📊 BENCHMARK SUMMARY (NO DATA LEAKAGE)")
             print(f"{'='*60}")
             print(summary_df.to_string(index=False))
+            
+            print(f"\n📈 AVERAGE METRICS BY METHOD:")
+            print(summary_df.groupby('method').agg({
+                'n_components': 'mean',
+                'train_cev_score': 'mean',
+                'avg_memory_gb': 'mean',
+                'peak_memory_gb': 'mean',
+                'time_seconds': 'mean'
+            }).round(4))
         
         MemoryManager.log_memory("Final")
         
@@ -1522,60 +1279,35 @@ def run_benchmark(
     output_dir: str = None,
     create_plots: bool = True,
     max_memory_gb: float = 4.0,
-
-    # 🆕 SAMPLING PARAMETERS
-    enable_sampling: bool = False,
-    sampling_kmer_threshold: int = 8,
-    sampling_percentage: float = 0.1,
-    min_samples_per_class: int = 2,
-    max_samples_per_class: int = None,
-    
     **kwargs
 ):
     """
-    🚀 MEMORY-SAFE BENCHMARK API with Stratified Sampling
+    🚀 MEMORY-SAFE BENCHMARK API
     
     Args:
         data_path: Path ke vectorization directory
         levels: List taxonomic levels
         kmers: List k-mer sizes
-        methods: List methods ('ipca', 'svd')
+        methods: List methods ('ipca', 'svd', 'umap')
         output_dir: Output directory
         create_plots: Whether to create plots
         max_memory_gb: Maximum memory per operation (GB)
-        
-        # 🆕 Sampling parameters
-        enable_sampling: Enable stratified sampling
-        sampling_kmer_threshold: Apply sampling for k-mer >= threshold
-        sampling_percentage: Target percentage per class (0.0-1.0)
-        min_samples_per_class: Minimum samples to keep class
-        max_samples_per_class: Maximum samples per class (optional)
+        **kwargs: Additional parameters
         
     Returns:
         DataFrame dengan hasil benchmark
         
-    Example 1: Regular (no sampling)
+    Example for large datasets:
         results = run_benchmark(
             data_path='/path/to/data',
             levels=['genus'],
             kmers=[6],
-            methods=['ipca']
-        )
-    
-    Example 2: With sampling for large k-mer
-        results = run_benchmark(
-            data_path='/path/to/data',
-            levels=['genus'],
-            kmers=[6, 8, 10],
-            methods=['ipca'],
-            enable_sampling=True,
-            sampling_kmer_threshold=8,  # Sample k>=8 only
-            sampling_percentage=0.1,     # 10% per class
-            min_samples_per_class=2,     # Skip classes with <2 samples
-            max_samples_per_class=1000   # Max 1000 per class
+            methods=['ipca'],  # Recommended for large data
+            max_memory_gb=4.0,  # Adjust based on available RAM
+            batch_size=None,  # Auto-calculate
+            emergency_stop_threshold=85.0
         )
     """
-
     config = BenchmarkConfig(
         levels=levels,
         kmers=kmers,
@@ -1583,13 +1315,6 @@ def run_benchmark(
         output_dir=output_dir,
         create_plots=create_plots,
         max_memory_gb=max_memory_gb,
-
-        # 🆕 Sampling config
-        enable_sampling=enable_sampling,
-        sampling_kmer_threshold=sampling_kmer_threshold,
-        sampling_percentage=sampling_percentage,
-        min_samples_per_class=min_samples_per_class,
-        max_samples_per_class=max_samples_per_class,
         **kwargs
     )
     
@@ -1602,65 +1327,49 @@ def run_benchmark(
 # USAGE EXAMPLES
 # =================================================================
 
-
 if __name__ == "__main__":
     print("=" * 80)
-    print("STRATIFIED SAMPLING - USAGE EXAMPLES")
+    print("MEMORY-SAFE BENCHMARK - USAGE EXAMPLES")
     print("=" * 80)
     
-    # Example 1: Regular k-mer (no sampling)
-    print("\n📝 Example 1: K-mer 6 (no sampling)")
+    # Example 1: Large dataset (recommended)
+    print("\n📝 Example 1: Large dataset (400K rows x 60K features)")
     print("""
     results = run_benchmark(
         data_path='/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization',
         levels=['genus'],
         kmers=[6],
-        methods=['ipca'],
-        enable_sampling=False  # Disabled
+        methods=['ipca'],  # IPCA is memory-efficient
+        max_memory_gb=4.0,  # Max 4GB per operation
+        batch_size=None,  # Auto-calculate based on available memory
+        emergency_stop_threshold=85.0,  # Stop if memory > 85%
+        create_plots=True
     )
     """)
     
-    # Example 2: Large k-mer with sampling
-    print("\n📝 Example 2: K-mer 8+ (with 10% sampling)")
+    # Example 2: If you have more RAM
+    print("\n📝 Example 2: If you have 16GB+ RAM")
     print("""
     results = run_benchmark(
         data_path='/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization',
         levels=['genus'],
-        kmers=[8, 10],
-        methods=['ipca'],
-        enable_sampling=True,
-        sampling_kmer_threshold=8,   # Sample k>=8
-        sampling_percentage=0.1,      # 10% per class
-        min_samples_per_class=2,      # Skip if <2 samples
-        max_memory_gb=4.0
+        kmers=[6],
+        methods=['ipca', 'svd'],
+        max_memory_gb=8.0,  # Can use more memory
+        batch_size=1000,  # Larger batch size
+        create_plots=True
     )
     """)
     
-    # Example 3: Conservative sampling
-    print("\n📝 Example 3: Conservative sampling (20% per class)")
-    print("""
-    results = run_benchmark(
-        data_path='/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization',
-        levels=['genus'],
-        kmers=[6, 8],
-        methods=['ipca'],
-        enable_sampling=True,
-        sampling_kmer_threshold=8,
-        sampling_percentage=0.2,      # 20% per class
-        min_samples_per_class=5,      # Skip if <5 samples
-        max_samples_per_class=5000    # Max 5000 per class
-    )
-    """)
-    
-    print("\n✅ Key sampling features:")
-    print("   ✓ Stratified sampling per class")
-    print("   ✓ Configurable percentage (default 10%)")
-    print("   ✓ Auto-skip small classes (<min_samples)")
-    print("   ✓ Optional max limit per class")
-    print("   ✓ Detailed sampling statistics saved")
-    print("   ✓ Applied only to k-mer >= threshold")
-    
-    print("\n📊 Output files:")
-    print("   - features_fold0_train.csv (sampled features)")
-    print("   - sampling_stats_train.csv (per-class details)")
-    print("   - sampling_summary_train.txt (overall summary)")
+    print("\n✅ Key memory-safe features:")
+    print("   ✓ Auto batch size calculation")
+    print("   ✓ Incremental processing for IPCA")
+    print("   ✓ Memory monitoring at each step")
+    print("   ✓ Emergency stop if memory > threshold")
+    print("   ✓ Aggressive garbage collection")
+    print("   ✓ Chunked file saving")
+    print("   ✓ Sampled plotting")
+    print("\n⚠️  For 400K x 60K data, recommend:")
+    print("   - Use IPCA (not SVD)")
+    print("   - max_memory_gb=4.0")
+    print("   - batch_size=None (auto)")
