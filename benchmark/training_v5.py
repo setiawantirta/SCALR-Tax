@@ -36,23 +36,6 @@ from sklearn.metrics import (
 )
 from sklearn.preprocessing import label_binarize
 
-# IMPORT UNTUK TUNING
-from sklearn.model_selection import (
-    GridSearchCV, 
-    RandomizedSearchCV, 
-    StratifiedKFold,
-    cross_val_score
-)
-
-try:
-    from skopt import BayesSearchCV
-    from skopt.space import Real, Integer, Categorical
-    BAYESIAN_AVAILABLE = True
-except ImportError:
-    BAYESIAN_AVAILABLE = False
-    print("⚠️  scikit-optimize not installed. Bayesian optimization disabled.")
-    print("   Install with: pip install scikit-optimize")
-
 # Configuration
 CONFIG = {
     'BASE_DIR': '/kaggle/working/FASTA-KmerReduce/rki_2025/model',
@@ -341,312 +324,6 @@ def create_ml_pipelines(selected_models=None, use_partial_fit=False):
     return models_to_use
 
 
-# =================================================================
-# 🆕 HYPERPARAMETER SEARCH SPACES
-# =================================================================
-
-def get_param_grid(model_name, search_type='grid'):
-    """
-    Get hyperparameter search space for each model
-    
-    Parameters:
-    -----------
-    model_name : str
-        Model name
-    search_type : str
-        'grid' for GridSearchCV, 'random' for RandomizedSearchCV, 
-        'bayesian' for BayesSearchCV
-        
-    Returns:
-    --------
-    dict : Parameter grid/distribution
-    """
-    
-    if search_type == 'grid':
-        # GridSearchCV - Discrete values
-        param_grids = {
-            'KNN': {
-                'classifier__n_neighbors': [3, 5, 7, 9],
-                'classifier__weights': ['uniform', 'distance'],
-                'classifier__metric': ['euclidean', 'manhattan']
-            },
-            'NaiveBayes': {
-                'classifier__var_smoothing': [1e-9, 1e-8, 1e-7, 1e-6]
-            },
-            'RandomForest': {
-                'classifier__n_estimators': [50, 100, 200],
-                'classifier__max_depth': [10, 20, 30, None],
-                'classifier__min_samples_split': [2, 5, 10],
-                'classifier__min_samples_leaf': [1, 2, 4]
-            },
-            'XGBoost': {
-                'classifier__n_estimators': [50, 100, 200],
-                'classifier__max_depth': [3, 5, 7],
-                'classifier__learning_rate': [0.01, 0.1, 0.3],
-                'classifier__subsample': [0.8, 1.0],
-                'classifier__colsample_bytree': [0.8, 1.0]
-            },
-            'SVC': {
-                'classifier__C': [0.1, 1, 10],
-                'classifier__kernel': ['linear', 'rbf'],
-                'classifier__gamma': ['scale', 'auto']
-            },
-            'LightGBM': {
-                'classifier__n_estimators': [50, 100, 200],
-                'classifier__max_depth': [3, 5, 7],
-                'classifier__learning_rate': [0.01, 0.1, 0.3],
-                'classifier__num_leaves': [31, 50, 100]
-            },
-            'SGD': {
-                'classifier__loss': ['hinge', 'log_loss', 'perceptron'],
-                'classifier__penalty': ['l2', 'l1', 'elasticnet'],
-                'classifier__alpha': [0.0001, 0.001, 0.01],
-                'classifier__max_iter': [1000, 2000]
-            }
-        }
-    
-    elif search_type == 'random':
-        # RandomizedSearchCV - Continuous distributions
-        from scipy.stats import uniform, randint
-        
-        param_grids = {
-            'KNN': {
-                'classifier__n_neighbors': randint(3, 15),
-                'classifier__weights': ['uniform', 'distance'],
-                'classifier__metric': ['euclidean', 'manhattan', 'minkowski']
-            },
-            'NaiveBayes': {
-                'classifier__var_smoothing': uniform(1e-10, 1e-5)
-            },
-            'RandomForest': {
-                'classifier__n_estimators': randint(50, 300),
-                'classifier__max_depth': [10, 20, 30, None],
-                'classifier__min_samples_split': randint(2, 20),
-                'classifier__min_samples_leaf': randint(1, 10)
-            },
-            'XGBoost': {
-                'classifier__n_estimators': randint(50, 300),
-                'classifier__max_depth': randint(3, 10),
-                'classifier__learning_rate': uniform(0.01, 0.3),
-                'classifier__subsample': uniform(0.6, 0.4),
-                'classifier__colsample_bytree': uniform(0.6, 0.4)
-            },
-            'SVC': {
-                'classifier__C': uniform(0.1, 100),
-                'classifier__kernel': ['linear', 'rbf', 'poly'],
-                'classifier__gamma': ['scale', 'auto']
-            },
-            'LightGBM': {
-                'classifier__n_estimators': randint(50, 300),
-                'classifier__max_depth': randint(3, 10),
-                'classifier__learning_rate': uniform(0.01, 0.3),
-                'classifier__num_leaves': randint(20, 150)
-            },
-            'SGD': {
-                'classifier__loss': ['hinge', 'log_loss', 'perceptron'],
-                'classifier__penalty': ['l2', 'l1', 'elasticnet'],
-                'classifier__alpha': uniform(0.00001, 0.01),
-                'classifier__max_iter': randint(1000, 3000)
-            }
-        }
-    
-    elif search_type == 'bayesian':
-        # BayesSearchCV - Continuous & Categorical
-        if not BAYESIAN_AVAILABLE:
-            raise ImportError("scikit-optimize not installed. Cannot use Bayesian optimization.")
-        
-        param_grids = {
-            'KNN': {
-                'classifier__n_neighbors': Integer(3, 15),
-                'classifier__weights': Categorical(['uniform', 'distance']),
-                'classifier__metric': Categorical(['euclidean', 'manhattan'])
-            },
-            'NaiveBayes': {
-                'classifier__var_smoothing': Real(1e-10, 1e-5, prior='log-uniform')
-            },
-            'RandomForest': {
-                'classifier__n_estimators': Integer(50, 300),
-                'classifier__max_depth': Integer(10, 50),
-                'classifier__min_samples_split': Integer(2, 20),
-                'classifier__min_samples_leaf': Integer(1, 10)
-            },
-            'XGBoost': {
-                'classifier__n_estimators': Integer(50, 300),
-                'classifier__max_depth': Integer(3, 10),
-                'classifier__learning_rate': Real(0.01, 0.3, prior='log-uniform'),
-                'classifier__subsample': Real(0.6, 1.0),
-                'classifier__colsample_bytree': Real(0.6, 1.0)
-            },
-            'SVC': {
-                'classifier__C': Real(0.1, 100, prior='log-uniform'),
-                'classifier__kernel': Categorical(['linear', 'rbf']),
-                'classifier__gamma': Categorical(['scale', 'auto'])
-            },
-            'LightGBM': {
-                'classifier__n_estimators': Integer(50, 300),
-                'classifier__max_depth': Integer(3, 10),
-                'classifier__learning_rate': Real(0.01, 0.3, prior='log-uniform'),
-                'classifier__num_leaves': Integer(20, 150)
-            },
-            'SGD': {
-                'classifier__loss': Categorical(['hinge', 'log_loss', 'perceptron']),
-                'classifier__penalty': Categorical(['l2', 'l1', 'elasticnet']),
-                'classifier__alpha': Real(0.00001, 0.01, prior='log-uniform'),
-                'classifier__max_iter': Integer(1000, 3000)
-            }
-        }
-    
-    else:
-        raise ValueError(f"Invalid search_type: {search_type}. Use 'grid', 'random', or 'bayesian'")
-    
-    return param_grids.get(model_name, {})
-
-
-# =================================================================
-# 🆕 HYPERPARAMETER TUNING FUNCTION
-# =================================================================
-
-def tune_hyperparameters(
-    pipeline, 
-    X_train, 
-    y_train, 
-    model_name,
-    optimization='grid',
-    cv_folds=3,
-    n_iter=20,  # For RandomizedSearchCV and BayesSearchCV
-    n_jobs=-1,
-    verbose=1
-):
-    """
-    Perform hyperparameter tuning using GridSearchCV, RandomizedSearchCV, or BayesSearchCV
-    
-    Parameters:
-    -----------
-    pipeline : sklearn Pipeline
-        Model pipeline
-    X_train : array-like
-        Training features
-    y_train : array-like
-        Training labels
-    model_name : str
-        Model name
-    optimization : str
-        'grid' for GridSearchCV, 'random' for RandomizedSearchCV, 
-        'bayesian' for BayesSearchCV, 'none' to skip tuning
-    cv_folds : int
-        Number of cross-validation folds
-    n_iter : int
-        Number of iterations for RandomizedSearchCV and BayesSearchCV
-    n_jobs : int
-        Number of parallel jobs
-    verbose : int
-        Verbosity level
-        
-    Returns:
-    --------
-    best_estimator : Tuned pipeline
-    best_params : Best parameters found
-    cv_results : Cross-validation results
-    """
-    
-    if optimization == 'none':
-        print(f"   ℹ️  Skipping hyperparameter tuning for {model_name}")
-        return pipeline, {}, None
-    
-    print(f"\n🔧 Hyperparameter Tuning: {model_name} ({optimization.upper()})")
-    print(f"   CV Folds: {cv_folds}")
-    
-    # Get parameter grid
-    param_grid = get_param_grid(model_name, search_type=optimization)
-    
-    if not param_grid:
-        print(f"   ⚠️  No parameter grid defined for {model_name}. Skipping tuning.")
-        return pipeline, {}, None
-    
-    print(f"   Parameters to tune: {list(param_grid.keys())}")
-    
-    # Create StratifiedKFold
-    cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=CONFIG['RANDOM_STATE'])
-    
-    # Select search method
-    if optimization == 'grid':
-        print(f"   🔍 Using GridSearchCV (exhaustive search)")
-        search = GridSearchCV(
-            estimator=pipeline,
-            param_grid=param_grid,
-            cv=cv,
-            scoring='f1_macro',
-            n_jobs=n_jobs,
-            verbose=verbose,
-            error_score='raise'
-        )
-    
-    elif optimization == 'random':
-        print(f"   🎲 Using RandomizedSearchCV (n_iter={n_iter})")
-        search = RandomizedSearchCV(
-            estimator=pipeline,
-            param_distributions=param_grid,
-            n_iter=n_iter,
-            cv=cv,
-            scoring='f1_macro',
-            n_jobs=n_jobs,
-            verbose=verbose,
-            random_state=CONFIG['RANDOM_STATE'],
-            error_score='raise'
-        )
-    
-    elif optimization == 'bayesian':
-        if not BAYESIAN_AVAILABLE:
-            print(f"   ⚠️  Bayesian optimization not available. Falling back to RandomizedSearchCV.")
-            search = RandomizedSearchCV(
-                estimator=pipeline,
-                param_distributions=get_param_grid(model_name, search_type='random'),
-                n_iter=n_iter,
-                cv=cv,
-                scoring='f1_macro',
-                n_jobs=n_jobs,
-                verbose=verbose,
-                random_state=CONFIG['RANDOM_STATE'],
-                error_score='raise'
-            )
-        else:
-            print(f"   🧠 Using BayesSearchCV (n_iter={n_iter})")
-            search = BayesSearchCV(
-                estimator=pipeline,
-                search_spaces=param_grid,
-                n_iter=n_iter,
-                cv=cv,
-                scoring='f1_macro',
-                n_jobs=n_jobs,
-                verbose=verbose,
-                random_state=CONFIG['RANDOM_STATE'],
-                error_score='raise'
-            )
-    
-    else:
-        raise ValueError(f"Invalid optimization: {optimization}")
-    
-    # Perform search
-    print(f"   ⏳ Starting search...")
-    start_time = time.time()
-    
-    try:
-        search.fit(X_train, y_train)
-        elapsed = time.time() - start_time
-        
-        print(f"   ✅ Search completed in {elapsed:.2f}s")
-        print(f"   🏆 Best Score (CV F1-Macro): {search.best_score_:.4f}")
-        print(f"   📋 Best Parameters:")
-        for param, value in search.best_params_.items():
-            print(f"      {param}: {value}")
-        
-        return search.best_estimator_, search.best_params_, search.cv_results_
-    
-    except Exception as e:
-        print(f"   ❌ Error during hyperparameter tuning: {e}")
-        import traceback
-        traceback.print_exc()
-        return pipeline, {}, None
 
 def get_memory_usage():
     """Get current memory usage in MB"""
@@ -797,68 +474,21 @@ def generate_realistic_confidence(model_name, accuracy, f1_score, n_samples=100)
     return confidence
 
 
-def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_train, y_train, X_test, y_test, output_dir):
-    """
-    Create comprehensive analysis visualization with 3x2 layout
-    
-    MODIFIED:
-    - Plot 1 (Top Left): Train Performance Comparison (using train data)
-    - Plot 6 (Bottom Right): Test Performance Comparison (radar chart with test data)
-    """
+def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_test, y_test, output_dir):
+    """Create comprehensive analysis visualization with 3x2 layout"""
     print(f"\n🎨 Creating comprehensive analysis for {dataset_info['name']}")
     
     # Create dataset-specific output directory
     dataset_output_dir = os.path.join(output_dir, dataset_info['name'])
     os.makedirs(dataset_output_dir, exist_ok=True)
     
-    # ✅ CALCULATE TRAIN METRICS FOR EACH MODEL
-    print(f"   📊 Calculating TRAIN metrics for comparison...")
-    train_metrics_list = []
-    
-    for model_name, model_obj in trained_models.items():
-        try:
-            # Predict on TRAIN data
-            y_train_pred = model_obj.predict(X_train)
-            
-            # Calculate train metrics
-            train_metrics = {
-                'Model': model_name,
-                'Train_Accuracy': accuracy_score(y_train, y_train_pred),
-                'Train_F1_Macro': f1_score(y_train, y_train_pred, average='macro', zero_division=0),
-                'Train_Recall_Macro': recall_score(y_train, y_train_pred, average='macro', zero_division=0),
-                'Train_Precision_Macro': precision_score(y_train, y_train_pred, average='macro', zero_division=0)
-            }
-            
-            # Try to get train ROC AUC
-            if hasattr(model_obj.named_steps['classifier'], 'predict_proba'):
-                try:
-                    y_train_proba = model_obj.predict_proba(X_train)
-                    if len(np.unique(y_train)) > 2:
-                        train_metrics['Train_ROC_AUC'] = roc_auc_score(
-                            y_train, y_train_proba, multi_class='ovr', average='macro'
-                        )
-                    else:
-                        train_metrics['Train_ROC_AUC'] = roc_auc_score(y_train, y_train_proba[:, 1])
-                except:
-                    train_metrics['Train_ROC_AUC'] = np.nan
-            else:
-                train_metrics['Train_ROC_AUC'] = np.nan
-            
-            train_metrics_list.append(train_metrics)
-            print(f"      ✅ {model_name} - Train Acc: {train_metrics['Train_Accuracy']:.4f}, F1: {train_metrics['Train_F1_Macro']:.4f}")
-            
-        except Exception as e:
-            print(f"      ⚠️ Error calculating train metrics for {model_name}: {e}")
-    
-    train_metrics_df = pd.DataFrame(train_metrics_list)
-    
-    # Get ROC values from results (TEST data)
+    # Get ROC values from results
     PIPELINE_ROC_VALUES = {
         row['Model']: round(row['ROC_AUC'], 4) if not np.isnan(row['ROC_AUC']) else 0.5
         for _, row in results_df.iterrows()
     }
     
-    print(f"   ROC Values (Test): {PIPELINE_ROC_VALUES}")
+    print(f"   ROC Values: {PIPELINE_ROC_VALUES}")
     
     # Helper functions with 2 decimal places
     def add_value_labels_multi_bars(ax, x_pos, values_list, width, bar_colors, offset=0.002):
@@ -882,43 +512,31 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_tr
     # Setup figure with 3x2 layout
     fig = plt.figure(figsize=(20, 18))
     
-    # ================================================================
-    # 1. ✅ TRAIN PERFORMANCE COMPARISON (Top Left) - MODIFIED
-    # ================================================================
+    # 1. Model Performance Comparison (Top Left)
     ax1 = plt.subplot(3, 2, 1)
+    metrics = ['Accuracy', 'F1_Macro', 'Recall_Macro', 'Precision_Macro', 'ROC_AUC']
+    x_pos = np.arange(len(results_df))
+    width = 0.16
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
     
-    if len(train_metrics_df) > 0:
-        metrics = ['Train_Accuracy', 'Train_F1_Macro', 'Train_Recall_Macro', 
-                   'Train_Precision_Macro', 'Train_ROC_AUC']
-        display_names = ['Accuracy', 'F1_Macro', 'Recall_Macro', 'Precision_Macro', 'ROC_AUC']
-        
-        x_pos = np.arange(len(train_metrics_df))
-        width = 0.16
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-        
-        all_values = []
-        for i, (metric, display_name) in enumerate(zip(metrics, display_names)):
-            if metric in train_metrics_df.columns:
-                values = train_metrics_df[metric].tolist()
-                plt.bar(x_pos + i*width, values, width, 
-                       label=display_name, alpha=0.8, color=colors[i])
-                all_values.append(values)
-        
-        add_value_labels_multi_bars(ax1, x_pos, all_values, width, colors)
-        plt.xlabel('Models', fontweight='bold')
-        plt.ylabel('Score', fontweight='bold')
-        plt.title('Train Performance Comparison', pad=20, fontweight='bold', fontsize=14)  # ✅ CHANGED
-        plt.xticks(x_pos + width*2, train_metrics_df['Model'].tolist(), rotation=45, ha='right', fontweight='bold')
-        plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
-        plt.grid(True, alpha=0.3)
-        plt.ylim(0, 1.1)
-    else:
-        plt.text(0.5, 0.5, 'Train Performance\nNo Data Available', 
-                ha='center', va='center', transform=ax1.transAxes, fontsize=12)
+    all_values = []
+    for i, metric in enumerate(metrics):
+        if metric in results_df.columns:
+            values = results_df[metric].tolist()
+            plt.bar(x_pos + i*width, values, width, 
+                   label=metric, alpha=0.8, color=colors[i])
+            all_values.append(values)
     
-    # ================================================================
-    # 2. Training vs Prediction Time (Top Right) - NO CHANGE
-    # ================================================================
+    add_value_labels_multi_bars(ax1, x_pos, all_values, width, colors)
+    plt.xlabel('Models', fontweight='bold')
+    plt.ylabel('Score', fontweight='bold')
+    plt.title('Model Performance Comparison', pad=20, fontweight='bold', fontsize=14)
+    plt.xticks(x_pos + width*2, results_df['Model'].tolist(), rotation=45, ha='right', fontweight='bold')
+    plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
+    plt.grid(True, alpha=0.3)
+    plt.ylim(0, 1.1)
+    
+    # 2. Training vs Prediction Time (Top Right)
     ax2 = plt.subplot(3, 2, 2)
     if 'Train_Time_Seconds' in results_df.columns and 'Predict_Time_Seconds' in results_df.columns:
         x_pos = np.arange(len(results_df))
@@ -939,9 +557,7 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_tr
         plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
         plt.grid(True, alpha=0.3)
     
-    # ================================================================
-    # 3. Memory Usage Comparison (Middle Left) - NO CHANGE
-    # ================================================================
+    # 3. Memory Usage Comparison (Middle Left)
     ax3 = plt.subplot(3, 2, 3)
     if 'Peak_Memory_Train_MB' in results_df.columns and 'Peak_Memory_Predict_MB' in results_df.columns:
         x_pos = np.arange(len(results_df))
@@ -962,9 +578,7 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_tr
         plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=9, frameon=True)
         plt.grid(True, alpha=0.3)
     
-    # ================================================================
-    # 4. ROC Curves (Middle Right) - NO CHANGE
-    # ================================================================
+    # 4. ROC Curves (Middle Right)
     ax4 = plt.subplot(3, 2, 4)
     try:
         colors_roc = ['darkorange', 'cornflowerblue', 'green', 'red', 'purple', 'brown', 'pink']
@@ -1014,9 +628,7 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_tr
         plt.text(0.5, 0.5, 'ROC Curves\nError', 
                 ha='center', va='center', transform=ax4.transAxes, fontsize=12)
     
-    # ================================================================
-    # 5. Confidence Distribution (Bottom Left) - NO CHANGE
-    # ================================================================
+    # 5. Confidence Distribution (Bottom Left)
     ax5 = plt.subplot(3, 2, 5)
     try:
         colors_conf = ['#ff7f0e', '#2ca02c', '#1f77b4', '#d62728', '#9467bd', '#8c564b', '#e377c2']
@@ -1101,9 +713,7 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_tr
         import traceback
         traceback.print_exc()
     
-    # ================================================================
-    # 6. ✅ TEST PERFORMANCE RADAR CHART (Bottom Right) - MODIFIED
-    # ================================================================
+    # 6. Performance Radar Chart (Bottom Right)
     ax6 = plt.subplot(3, 2, 6, projection='polar')
     if len(results_df) > 0:
         metrics_radar = ['Accuracy', 'F1_Macro', 'Recall_Macro', 'Precision_Macro', 'ROC_AUC']
@@ -1119,31 +729,15 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_tr
                 values = [row[m] if not np.isnan(row[m]) else 0 for m in available_metrics]
                 values += values[:1]
                 
-                # ✅ MODIFIED: Thinner lines (linewidth=1.5 instead of 3)
-                # ✅ MODIFIED: Smaller markers (markersize=3)
-                ax6.plot(angles, values, 'o-', linewidth=1.5,  # ✅ CHANGED from 3 to 1.5 (~50% thinner)
-                        markersize=3,  # ✅ ADDED: Small markers (~50% of default)
+                ax6.plot(angles, values, 'o-', linewidth=3, 
                         label=row['Model'], color=colors_radar[i % len(colors_radar)])
                 ax6.fill(angles, values, alpha=0.25, color=colors_radar[i % len(colors_radar)])
-            
-            # ✅ MODIFIED: Scale range from 0.2 to 0.1 intervals
-            ax6.set_yticks(np.arange(0, 1.1, 0.1))  # ✅ CHANGED from 0.2 to 0.1
-            
-            # ✅ MODIFIED: Smaller font size for y-axis labels
-            ax6.set_yticklabels([f'{y:.1f}' for y in np.arange(0, 1.1, 0.1)], 
-                               fontsize=7)  # ✅ CHANGED from default to 7
             
             ax6.set_xticks(angles[:-1])
             ax6.set_xticklabels(available_metrics, fontsize=10, fontweight='bold')
             ax6.set_ylim(0, 1)
-            
-            # ✅ MODIFIED: Title changed to "Test Performance Comparison"
-            ax6.set_title('Test Performance Comparison', pad=30, fontweight='bold', fontsize=14)  # ✅ CHANGED
-            
+            ax6.set_title('Performance Radar Chart', pad=30, fontweight='bold', fontsize=14)
             ax6.legend(loc='upper left', bbox_to_anchor=(1.3, 1.1), fontsize=8, frameon=True)
-            
-            # ✅ ADDED: Grid lines thinner
-            ax6.grid(True, alpha=0.3, linewidth=0.5)  # ✅ ADDED: Thinner grid
     
     # Final layout
     plt.tight_layout(rect=[0, 0, 0.95, 0.96])
@@ -1160,23 +754,14 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_tr
     return output_file
 
 
-
-def run_training_pipeline(
-    X_train, X_test, y_train, y_test, 
-    dataset_name='dataset', 
-    label_encoder=None,
-    output_dir=None,
-    create_plots=True,
-    selected_models=None,
-    use_partial_fit=False,
-    batch_size=1000,
-    
-    # 🆕 HYPERPARAMETER TUNING PARAMETERS
-    enable_tuning=False,
-    optimization='grid',  # 'grid', 'random', 'bayesian', or 'none'
-    cv_folds=3,
-    n_iter=20  # For random/bayesian search
-):
+def run_training_pipeline(X_train, X_test, y_train, y_test, 
+                         dataset_name='dataset', 
+                         label_encoder=None,
+                         output_dir=None,
+                         create_plots=True,
+                         selected_models=None,
+                         use_partial_fit=False,
+                         batch_size=1000):
     """
     Run complete training pipeline with visualization and memory tracking
     
@@ -1204,16 +789,6 @@ def run_training_pipeline(
         Use partial_fit for NaiveBayes and SGD (for large datasets)
     batch_size : int, default=1000
         Batch size for partial_fit training
-    
-    # 🆕 Hyperparameter tuning parameters
-    enable_tuning : bool, default=False
-        Enable hyperparameter tuning
-    optimization : str, default='grid'
-        Optimization method: 'grid', 'random', 'bayesian', or 'none'
-    cv_folds : int, default=3
-        Number of cross-validation folds
-    n_iter : int, default=20
-        Number of iterations for RandomizedSearchCV and BayesSearchCV
         
     Returns:
     --------
@@ -1226,33 +801,23 @@ def run_training_pipeline(
     print(f"Use Partial Fit: {use_partial_fit}")
     if use_partial_fit:
         print(f"Batch Size: {batch_size}")
-    
-    # 🆕 Print tuning info
-    if enable_tuning:
-        print(f"🔧 Hyperparameter Tuning: ENABLED ({optimization.upper()})")
-        print(f"   CV Folds: {cv_folds}")
-        if optimization in ['random', 'bayesian']:
-            print(f"   Iterations: {n_iter}")
-    else:
-        print(f"🔧 Hyperparameter Tuning: DISABLED (using default parameters)")
-    
     print("="*60)
     
     # Create output directory
     if output_dir is None:
         output_dir = CONFIG['BASE_DIR']
     
+    # Create dataset-specific directory
     dataset_output_dir = os.path.join(output_dir, dataset_name)
     os.makedirs(dataset_output_dir, exist_ok=True)
     
-    # Create pipelines
+    # Create pipelines with selected models
     models = create_ml_pipelines(selected_models=selected_models, use_partial_fit=use_partial_fit)
     
     results = []
     all_predictions = []
     all_probabilities = []
     trained_models = {}
-    tuning_results = {}  # 🆕 Store tuning results
     
     for model_name, pipeline in tqdm(models.items(), desc="Training models"):
         model_path = os.path.join(dataset_output_dir, f"{model_name}_model.pkl")
@@ -1267,61 +832,37 @@ def run_training_pipeline(
             print(f"\n⏳ Training {model_name}...")
             start_time = time.time()
             
+            # Start memory tracking
             tracemalloc.start()
             mem_samples_train = []
             
             try:
-                # 🆕 HYPERPARAMETER TUNING
-                if enable_tuning and optimization != 'none':
-                    tuned_pipeline, best_params, cv_results = tune_hyperparameters(
-                        pipeline=pipeline,
-                        X_train=X_train,
-                        y_train=y_train,
-                        model_name=model_name,
-                        optimization=optimization,
-                        cv_folds=cv_folds,
-                        n_iter=n_iter,
-                        n_jobs=-1,
-                        verbose=1
+                # Check if we should use partial_fit
+                supports_partial_fit = hasattr(pipeline, '_supports_partial_fit') and pipeline._supports_partial_fit
+                
+                if use_partial_fit and supports_partial_fit:
+                    # Scale data first
+                    X_train_scaled = pipeline.named_steps['scaler'].fit_transform(X_train)
+                    
+                    # Use partial_fit for classifier
+                    classifier = pipeline.named_steps['classifier']
+                    classifier = partial_fit_model(
+                        classifier, 
+                        X_train_scaled, 
+                        y_train, 
+                        batch_size=batch_size,
+                        model_name=model_name
                     )
                     
-                    pipeline = tuned_pipeline
-                    tuning_results[model_name] = {
-                        'best_params': best_params,
-                        'cv_results': cv_results
-                    }
-                    
-                    # Save best parameters
-                    if best_params:
-                        params_path = os.path.join(dataset_output_dir, f"{model_name}_best_params.txt")
-                        with open(params_path, 'w') as f:
-                            f.write(f"Best Parameters for {model_name}:\n")
-                            f.write("="*60 + "\n")
-                            for param, value in best_params.items():
-                                f.write(f"{param}: {value}\n")
-                        print(f"   💾 Best parameters saved: {params_path}")
-                
+                    # Update pipeline with trained classifier
+                    pipeline.named_steps['classifier'] = classifier
                 else:
-                    # Regular training without tuning
-                    supports_partial_fit = hasattr(pipeline, '_supports_partial_fit') and pipeline._supports_partial_fit
-                    
-                    if use_partial_fit and supports_partial_fit:
-                        X_train_scaled = pipeline.named_steps['scaler'].fit_transform(X_train)
-                        classifier = pipeline.named_steps['classifier']
-                        classifier = partial_fit_model(
-                            classifier, 
-                            X_train_scaled, 
-                            y_train, 
-                            batch_size=batch_size,
-                            model_name=model_name
-                        )
-                        pipeline.named_steps['classifier'] = classifier
-                    else:
-                        pipeline.fit(X_train, y_train)
+                    # Regular fit
+                    pipeline.fit(X_train, y_train)
                 
                 train_time = time.time() - start_time
                 
-                # Track memory
+                # Track memory during training
                 mem_samples_train.append(get_memory_usage())
                 current_mem, peak_mem = tracemalloc.get_traced_memory()
                 peak_mem_train = max(peak_mem_train, current_mem / 1024 / 1024)
@@ -1336,7 +877,6 @@ def run_training_pipeline(
                 print(f"   💾 Peak Memory (Train): {peak_mem_train:.2f} MB")
                 
                 trained_models[model_name] = pipeline
-                
             except Exception as e:
                 print(f"❌ Error training {model_name}: {e}")
                 import traceback
@@ -1353,7 +893,7 @@ def run_training_pipeline(
                 print(f"❌ Error loading {model_name}: {e}")
                 continue
         
-       # Evaluation
+        # Evaluation with memory tracking
         mem_before_pred = get_memory_usage()
         peak_mem_pred = mem_before_pred
         avg_mem_pred = mem_before_pred
@@ -1367,6 +907,7 @@ def run_training_pipeline(
                                                      model_name, label_encoder)
             pred_time = time.time() - start_pred_time
             
+            # Track memory during prediction
             mem_samples_pred.append(get_memory_usage())
             current_mem, peak_mem = tracemalloc.get_traced_memory()
             peak_mem_pred = max(peak_mem_pred, current_mem / 1024 / 1024)
@@ -1375,20 +916,13 @@ def run_training_pipeline(
             if mem_samples_pred:
                 avg_mem_pred = np.mean(mem_samples_pred)
             
+            # Add timing and memory metrics
             metrics['Train_Time_Seconds'] = round(train_time, 3)
             metrics['Predict_Time_Seconds'] = round(pred_time, 3)
             metrics['Peak_Memory_Train_MB'] = round(peak_mem_train, 2)
             metrics['Avg_Memory_Train_MB'] = round(avg_mem_train, 2)
             metrics['Peak_Memory_Predict_MB'] = round(peak_mem_pred, 2)
             metrics['Avg_Memory_Predict_MB'] = round(avg_mem_pred, 2)
-            
-            # 🆕 Add tuning info
-            if model_name in tuning_results:
-                metrics['Tuned'] = True
-                metrics['Optimization_Method'] = optimization
-            else:
-                metrics['Tuned'] = False
-                metrics['Optimization_Method'] = 'none'
             
             results.append(metrics)
             
@@ -1442,22 +976,26 @@ def run_training_pipeline(
     if results:
         results_df = pd.DataFrame(results)
         
+        # Save summary with memory metrics
         summary_path = os.path.join(dataset_output_dir, f"summary.csv")
         results_df.to_csv(summary_path, index=False)
         print(f"\n✅ Summary saved: {summary_path}")
         
+        # Save predictions
         if all_predictions:
             predictions_df = pd.concat(all_predictions, ignore_index=True)
             pred_path = os.path.join(dataset_output_dir, f"predictions.csv")
             predictions_df.to_csv(pred_path, index=False)
             print(f"✅ Predictions saved: {pred_path}")
         
+        # Save probabilities
         if all_probabilities:
             probabilities_df = pd.concat(all_probabilities, ignore_index=True)
             proba_path = os.path.join(dataset_output_dir, f"prediction_probabilities.csv")
             probabilities_df.to_csv(proba_path, index=False)
             print(f"✅ Prediction probabilities saved: {proba_path}")
         
+        # Print summary
         print(f"\n📊 **TRAINING COMPLETED**")
         print("="*60)
         print(results_df.sort_values('F1_Macro', ascending=False).to_string(index=False))
@@ -1469,11 +1007,13 @@ def run_training_pipeline(
         print(f"   💾 Peak Memory: {best_model_row['Peak_Memory_Train_MB']:.2f} MB (Train), "
               f"{best_model_row['Peak_Memory_Predict_MB']:.2f} MB (Predict)")
         
+        # Save best model
         if best_model_name in trained_models:
             best_model_path = os.path.join(dataset_output_dir, f"BEST_MODEL.pkl")
             joblib.dump(trained_models[best_model_name], best_model_path)
             print(f"✅ Best model saved: {best_model_path}")
         
+        # Create comprehensive visualization
         if create_plots and trained_models:
             try:
                 dataset_info = {'name': dataset_name}
@@ -1481,8 +1021,6 @@ def run_training_pipeline(
                     results_df, 
                     dataset_info, 
                     trained_models, 
-                    X_train,
-                    y_train,
                     X_test, 
                     y_test, 
                     output_dir
@@ -1493,7 +1031,6 @@ def run_training_pipeline(
                 traceback.print_exc()
         
         return results_df, best_model_name, trained_models.get(best_model_name)
-    
     else:
         print("❌ No models were successfully trained")
         return None, None, None
@@ -1557,48 +1094,4 @@ if __name__ == "__main__":
             use_partial_fit=True,  # Enable partial fit
             batch_size=1000,  # Batch size for partial fit
             create_plots=True
-        )
-
-        # Example 4: Tuning Using Grid search (Exhaustive)
-        results_df, best_model_name, best_model = run_training_pipeline(
-            X_train=data['X_train'],
-            X_test=data['X_test'],
-            y_train=data['y_train'],
-            y_test=data['y_test'],
-            dataset_name='grid_search_dataset',
-            
-            # ✅ ENABLE TUNING
-            enable_tuning=True,
-            optimization='grid',  # GridSearchCV
-            cv_folds=3  # 3-fold cross-validation
-        )
-
-        # Example 5: Tuning using Randomize (Smart)
-        results_df, best_model_name, best_model = run_training_pipeline(
-            X_train=data['X_train'],
-            X_test=data['X_test'],
-            y_train=data['y_train'],
-            y_test=data['y_test'],
-            dataset_name='random_search_dataset',
-            
-            # ✅ ENABLE TUNING
-            enable_tuning=True,
-            optimization='random',  # RandomizedSearchCV
-            cv_folds=3,
-            n_iter=20  # Try 20 random combinations
-        )
-
-        # Example 6: Tuning using Bayesian Optimization (Smart)
-        results_df, best_model_name, best_model = run_training_pipeline(
-            X_train=data['X_train'],
-            X_test=data['X_test'],
-            y_train=data['y_train'],
-            y_test=data['y_test'],
-            dataset_name='bayesian_optimization_dataset',
-
-            # ✅ ENABLE TUNING
-            enable_tuning=True,
-            optimization='bayesian',  # BayesianOptimization
-            cv_folds=3,
-            n_iter=20  # Try 20 random combinations
         )

@@ -116,7 +116,7 @@ class BenchmarkConfig:
         enable_sampling: bool = False,  # Enable stratified sampling
         sampling_kmer_threshold: int = 8,  # Apply sampling for k >= 8
         sampling_percentage: float = 0.1,  # 10% per class
-        min_samples_per_class = 2,  # ✅ Can be int or 'disable'
+        min_samples_per_class: int = 2,  # Minimum samples to keep class
         max_samples_per_class: int = None,  # Optional max limit
 
         # Processing parameters - MEMORY SAFE DEFAULTS
@@ -164,26 +164,11 @@ class BenchmarkConfig:
         self.enable_memory_monitoring = enable_memory_monitoring
         self.emergency_stop_threshold = emergency_stop_threshold
 
-        # ✅ HANDLE min_samples_per_class: int or 'disable'
-        if isinstance(min_samples_per_class, str):
-            if min_samples_per_class.lower() == 'disable':
-                self.min_samples_per_class = 'disable'
-                print("ℹ️  min_samples_per_class set to 'disable' - ALL samples from ALL classes will be used")
-            else:
-                raise ValueError(f"Invalid min_samples_per_class string: '{min_samples_per_class}'. Use 'disable' or integer.")
-        elif isinstance(min_samples_per_class, (int, float)):
-            if min_samples_per_class < 0:
-                raise ValueError(f"min_samples_per_class must be >= 0, got {min_samples_per_class}")
-            self.min_samples_per_class = int(min_samples_per_class)
-            if self.min_samples_per_class == 0:
-                print("⚠️  WARNING: min_samples_per_class=0 may cause errors. Consider using 'disable' or 1.")
-        else:
-            raise TypeError(f"min_samples_per_class must be int or 'disable', got {type(min_samples_per_class)}")
-
-        # Sampling config
+        # 🆕 Sampling config
         self.enable_sampling = enable_sampling
         self.sampling_kmer_threshold = sampling_kmer_threshold
         self.sampling_percentage = sampling_percentage
+        self.min_samples_per_class = min_samples_per_class
         self.max_samples_per_class = max_samples_per_class
 
 # =================================================================
@@ -276,126 +261,6 @@ class StratifiedSampler:
             print(f"   ℹ️  No sampling (k-mer {kmer} < threshold {self.config.sampling_kmer_threshold})")
             return X, y, None
         
-        # ✅ CHECK IF min_samples_per_class IS DISABLED
-        if self.config.min_samples_per_class == 'disable':
-            print(f"\n{'='*60}")
-            print(f"🎲 STRATIFIED SAMPLING ACTIVATED (min_samples_per_class=DISABLE)")
-            print(f"{'='*60}")
-            print(f"   K-mer: {kmer} >= {self.config.sampling_kmer_threshold}")
-            print(f"   Level: {level}")
-            print(f"   Split: {split}")
-            print(f"   Original shape: {X.shape}")
-            print(f"   Target sampling: {self.config.sampling_percentage*100:.1f}% per class")
-            print(f"   ✅ ALL CLASSES INCLUDED (no minimum threshold)")
-            
-            # Get unique classes
-            unique_classes, class_counts = np.unique(y, return_counts=True)
-            n_classes = len(unique_classes)
-            
-            print(f"\n📊 CLASS DISTRIBUTION:")
-            print(f"   Total classes: {n_classes}")
-            print(f"   Total samples: {len(y):,}")
-            
-            # Perform sampling WITHOUT skipping ANY class
-            sampled_indices = []
-            sampling_stats = []
-            
-            print(f"\n🔄 Sampling per class (NO SKIPPING)...")
-            
-            for cls, original_count in tqdm(zip(unique_classes, class_counts), 
-                                           total=n_classes, 
-                                           desc="Sampling classes"):
-                
-                # ✅ NO SKIPPING - process ALL classes (even with 1 sample)
-                
-                # Get indices for this class
-                class_mask = (y == cls)
-                class_indices = np.where(class_mask)[0]
-                
-                # Calculate target sample size
-                target_samples = int(original_count * self.config.sampling_percentage)
-                
-                # ✅ ENSURE at least 1 sample if class exists
-                target_samples = max(1, target_samples)
-                
-                # Apply max limit if specified
-                if self.config.max_samples_per_class is not None:
-                    target_samples = min(target_samples, self.config.max_samples_per_class)
-                
-                # Don't sample more than available
-                target_samples = min(target_samples, original_count)
-                
-                # Random sampling
-                if target_samples < original_count:
-                    sampled_class_indices = np.random.choice(
-                        class_indices, 
-                        size=target_samples, 
-                        replace=False
-                    )
-                else:
-                    # Keep all samples if target >= original
-                    sampled_class_indices = class_indices
-                
-                sampled_indices.extend(sampled_class_indices)
-                
-                # Track statistics
-                sampling_stats.append({
-                    'class': cls,
-                    'original': original_count,
-                    'sampled': len(sampled_class_indices),
-                    'percentage': (len(sampled_class_indices) / original_count) * 100
-                })
-            
-            # Sort indices
-            sampled_indices = np.sort(sampled_indices)
-            
-            # Extract sampled data
-            X_sampled = X[sampled_indices]
-            y_sampled = y[sampled_indices]
-            
-            # Calculate statistics
-            total_original = len(y)
-            total_sampled = len(sampled_indices)
-            reduction_percent = (1 - total_sampled / total_original) * 100
-            
-            sampling_info = {
-                'original_samples': total_original,
-                'sampled_samples': total_sampled,
-                'reduction_percent': reduction_percent,
-                'original_classes': n_classes,
-                'valid_classes': n_classes,  # ALL classes are valid
-                'skipped_classes': 0,  # NO classes skipped
-                'per_class_stats': sampling_stats,
-                'skipped_class_ids': []  # Empty list
-            }
-            
-            # Print summary
-            print(f"\n{'='*60}")
-            print(f"✅ SAMPLING COMPLETED (ALL CLASSES INCLUDED)")
-            print(f"{'='*60}")
-            print(f"   Original: {total_original:,} samples, {n_classes} classes")
-            print(f"   Sampled:  {total_sampled:,} samples, {n_classes} classes")
-            print(f"   Reduction: {reduction_percent:.2f}%")
-            print(f"   ✅ Skipped: 0 classes (min_samples_per_class=DISABLE)")
-            
-            # Show per-class statistics
-            if sampling_stats:
-                print(f"\n📊 PER-CLASS SAMPLING (showing first 10):")
-                stats_df = pd.DataFrame(sampling_stats[:10])
-                print(stats_df.to_string(index=False))
-                
-                if len(sampling_stats) > 10:
-                    print(f"   ... and {len(sampling_stats)-10} more classes")
-                
-                # Overall statistics
-                avg_sampling = np.mean([s['percentage'] for s in sampling_stats])
-                print(f"\n   Average sampling per class: {avg_sampling:.2f}%")
-            
-            MemoryManager.force_gc()
-            
-            return X_sampled, y_sampled, sampling_info
-        
-        # ✅ ORIGINAL LOGIC: min_samples_per_class IS AN INTEGER
         print(f"\n{'='*60}")
         print(f"🎲 STRATIFIED SAMPLING ACTIVATED")
         print(f"{'='*60}")
@@ -445,35 +310,20 @@ class StratifiedSampler:
                                        total=n_classes, 
                                        desc="Sampling classes"):
             
-            # ✅ FIX 1: Skip empty classes FIRST
-            if original_count == 0:
+            # Skip small classes
+            if original_count < self.config.min_samples_per_class:
                 skipped_classes.append(cls)
-                print(f"   ⚠️  Skipping class {cls}: 0 samples")
                 continue
-            
-            # ✅ FIX 2: Skip small classes based on threshold
-            if self.config.min_samples_per_class > 0:
-                if original_count < self.config.min_samples_per_class:
-                    skipped_classes.append(cls)
-                    continue
             
             # Get indices for this class
             class_mask = (y == cls)
             class_indices = np.where(class_mask)[0]
             
             # Calculate target sample size
-            target_samples = int(original_count * self.config.sampling_percentage)
-            
-            # ✅ FIX 3: ENFORCE MINIMUM based on min_samples_per_class
-            if self.config.min_samples_per_class == 0:
-                # If min=0, ensure at least 1 sample
-                target_samples = max(1, target_samples)
-            else:
-                # Respect min_samples_per_class
-                target_samples = max(
-                    self.config.min_samples_per_class,
-                    target_samples
-                )
+            target_samples = max(
+                self.config.min_samples_per_class,
+                int(original_count * self.config.sampling_percentage)
+            )
             
             # Apply max limit if specified
             if self.config.max_samples_per_class is not None:
@@ -481,12 +331,6 @@ class StratifiedSampler:
             
             # Don't sample more than available
             target_samples = min(target_samples, original_count)
-            
-            # ✅ FIX 4: Final safety check
-            if target_samples <= 0:
-                skipped_classes.append(cls)
-                print(f"   ⚠️  Skipping class {cls}: target_samples={target_samples}")
-                continue
             
             # Random sampling
             if target_samples < original_count:
@@ -1683,7 +1527,7 @@ def run_benchmark(
     enable_sampling: bool = False,
     sampling_kmer_threshold: int = 8,
     sampling_percentage: float = 0.1,
-    min_samples_per_class = 2,  # ✅ Can be int or 'disable'
+    min_samples_per_class: int = 2,
     max_samples_per_class: int = None,
     
     **kwargs
@@ -1705,8 +1549,6 @@ def run_benchmark(
         sampling_kmer_threshold: Apply sampling for k-mer >= threshold
         sampling_percentage: Target percentage per class (0.0-1.0)
         min_samples_per_class: Minimum samples to keep class
-            - int (e.g., 2): Skip classes with < this number
-            - 'disable': Keep ALL classes (no minimum)
         max_samples_per_class: Maximum samples per class (optional)
         
     Returns:
@@ -1720,28 +1562,17 @@ def run_benchmark(
             methods=['ipca']
         )
     
-    Example 2: With sampling (skip small classes)
+    Example 2: With sampling for large k-mer
         results = run_benchmark(
             data_path='/path/to/data',
             levels=['genus'],
-            kmers=[8],
+            kmers=[6, 8, 10],
             methods=['ipca'],
             enable_sampling=True,
-            sampling_kmer_threshold=8,
-            sampling_percentage=0.1,
-            min_samples_per_class=2  # Skip classes with <2 samples
-        )
-    
-    Example 3: With sampling (keep ALL classes) ✅ NEW!
-        results = run_benchmark(
-            data_path='/path/to/data',
-            levels=['genus'],
-            kmers=[8],
-            methods=['ipca'],
-            enable_sampling=True,
-            sampling_kmer_threshold=8,
-            sampling_percentage=0.1,
-            min_samples_per_class='disable'  # ✅ Keep ALL classes!
+            sampling_kmer_threshold=8,  # Sample k>=8 only
+            sampling_percentage=0.1,     # 10% per class
+            min_samples_per_class=2,     # Skip classes with <2 samples
+            max_samples_per_class=1000   # Max 1000 per class
         )
     """
 
@@ -1757,7 +1588,7 @@ def run_benchmark(
         enable_sampling=enable_sampling,
         sampling_kmer_threshold=sampling_kmer_threshold,
         sampling_percentage=sampling_percentage,
-        min_samples_per_class=min_samples_per_class,  # ✅ Can be int or 'disable'
+        min_samples_per_class=min_samples_per_class,
         max_samples_per_class=max_samples_per_class,
         **kwargs
     )
@@ -1820,35 +1651,7 @@ if __name__ == "__main__":
         max_samples_per_class=5000    # Max 5000 per class
     )
     """)
-
-    # Example 4: Keep all class sampling
-    print("\n📝 Example 3: Conservative sampling (20% per class)")
-    print("""
-    results = run_benchmark(
-        data_path='/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization',
-        levels=['genus'],
-        kmers=[6, 8],
-        methods=['ipca'],
-        enable_sampling=True,
-        sampling_kmer_threshold=8,
-        sampling_percentage=0.2,      # 20% per class
-        min_samples_per_class=disable,      # keep all classes
-        max_samples_per_class=5000    # Max 5000 per class
-    )
-    """)
-
-    # Example 4: No sampling
-    print("\n📝 Example 3: Conservative sampling (20% per class)")
-    print("""
-    results = run_benchmark(
-        data_path='/path/to/data',
-        levels=['genus'],
-        kmers=[8],
-        methods=['ipca'],
-        enable_sampling=False  # ✅ No sampling
-    )
-    """)
-
+    
     print("\n✅ Key sampling features:")
     print("   ✓ Stratified sampling per class")
     print("   ✓ Configurable percentage (default 10%)")
