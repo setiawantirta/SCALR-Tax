@@ -1159,7 +1159,141 @@ def create_comprehensive_analysis(results_df, dataset_info, trained_models, X_tr
     
     return output_file
 
+# =================================================================
+# 🆕 VALIDATION & CONFLICT DETECTION
+# =================================================================
 
+def validate_training_config(models, use_partial_fit, enable_tuning, optimization):
+    """
+    Validate training configuration and detect conflicts
+    
+    Parameters:
+    -----------
+    models : dict
+        Dictionary of model pipelines
+    use_partial_fit : bool
+        Whether partial_fit is enabled
+    enable_tuning : bool
+        Whether hyperparameter tuning is enabled
+    optimization : str
+        Optimization method ('grid', 'random', 'bayesian')
+        
+    Returns:
+    --------
+    dict : Configuration with warnings and recommendations
+    """
+    
+    # Identify partial_fit models
+    partial_fit_models = [
+        name for name, pipeline in models.items() 
+        if hasattr(pipeline, '_supports_partial_fit') and pipeline._supports_partial_fit
+    ]
+    
+    non_partial_fit_models = [
+        name for name in models.keys() 
+        if name not in partial_fit_models
+    ]
+    
+    config_status = {
+        'has_conflict': False,
+        'partial_fit_models': partial_fit_models,
+        'non_partial_fit_models': non_partial_fit_models,
+        'warnings': [],
+        'recommendations': [],
+        'skip_tuning_for': []  # Models that should skip tuning
+    }
+    
+    # ✅ CHECK 1: Conflict detection
+    if use_partial_fit and enable_tuning and optimization != 'none':
+        if partial_fit_models:
+            config_status['has_conflict'] = True
+            config_status['warnings'].append(
+                f"⚠️  CONFLICT DETECTED: {len(partial_fit_models)} model(s) support partial_fit"
+            )
+            config_status['warnings'].append(
+                f"   Models: {', '.join(partial_fit_models)}"
+            )
+            config_status['warnings'].append(
+                f"   Settings: use_partial_fit=True + enable_tuning=True ({optimization})"
+            )
+            config_status['warnings'].append("")
+            config_status['warnings'].append(
+                f"   ❌ PROBLEM:"
+            )
+            config_status['warnings'].append(
+                f"      Hyperparameter tuning will call fit() on FULL dataset"
+            )
+            config_status['warnings'].append(
+                f"      This IGNORES partial_fit and may cause MEMORY OVERFLOW!"
+            )
+            config_status['warnings'].append("")
+            
+            # Calculate estimated memory impact
+            config_status['warnings'].append(
+                f"   📊 MEMORY IMPACT ESTIMATION:"
+            )
+            config_status['warnings'].append(
+                f"      • Without tuning: Batch-by-batch (LOW memory)"
+            )
+            if optimization == 'grid':
+                config_status['warnings'].append(
+                    f"      • With GridSearchCV: FULL data × many iterations (VERY HIGH)"
+                )
+            elif optimization == 'random':
+                config_status['warnings'].append(
+                    f"      • With RandomizedSearchCV: FULL data × n_iter iterations (HIGH)"
+                )
+            elif optimization == 'bayesian':
+                config_status['warnings'].append(
+                    f"      • With BayesianSearchCV: FULL data × n_iter × cv_folds (HIGHEST!)"
+                )
+            config_status['warnings'].append("")
+            
+            # Add recommendations
+            config_status['recommendations'].append(
+                f"   💡 RECOMMENDATIONS (choose one):"
+            )
+            config_status['recommendations'].append(
+                f"      1. DISABLE tuning for partial_fit models (safest)"
+            )
+            config_status['recommendations'].append(
+                f"         → Set enable_tuning=False OR let system auto-skip"
+            )
+            config_status['recommendations'].append("")
+            config_status['recommendations'].append(
+                f"      2. DISABLE partial_fit (if dataset is small enough)"
+            )
+            config_status['recommendations'].append(
+                f"         → Set use_partial_fit=False"
+            )
+            config_status['recommendations'].append("")
+            config_status['recommendations'].append(
+                f"      3. SEPARATE models into 2 runs:"
+            )
+            config_status['recommendations'].append(
+                f"         → Run 1: {', '.join(non_partial_fit_models)} with tuning"
+            )
+            config_status['recommendations'].append(
+                f"         → Run 2: {', '.join(partial_fit_models)} with partial_fit (no tuning)"
+            )
+            config_status['recommendations'].append("")
+            
+            # Mark models to skip tuning
+            config_status['skip_tuning_for'] = partial_fit_models
+    
+    # ✅ CHECK 2: Info about model split
+    if partial_fit_models and non_partial_fit_models:
+        config_status['warnings'].append(
+            f"ℹ️  MODEL SPLIT:"
+        )
+        config_status['warnings'].append(
+            f"   • Partial_fit supported: {', '.join(partial_fit_models)}"
+        )
+        config_status['warnings'].append(
+            f"   • Regular fit only: {', '.join(non_partial_fit_models)}"
+        )
+    
+    return config_status
 
 def run_training_pipeline(
     X_train, X_test, y_train, y_test, 
@@ -1176,6 +1310,9 @@ def run_training_pipeline(
     optimization='grid',  # 'grid', 'random', 'bayesian', or 'none'
     cv_folds=3,
     n_iter=20  # For random/bayesian search
+
+    # 🆕 NEW PARAMETER: Auto-handling
+    auto_skip_conflict=True  # Automatically skip tuning for partial_fit models if conflict
 ):
     """
     Run complete training pipeline with visualization and memory tracking
@@ -1215,11 +1352,15 @@ def run_training_pipeline(
     n_iter : int, default=20
         Number of iterations for RandomizedSearchCV and BayesSearchCV
         
+    auto_skip_conflict : bool, default=True
+        If True, automatically skip tuning for partial_fit models when conflict detected.
+        If False, ask user for confirmation.
+        
     Returns:
     --------
     tuple : (results_df, best_model_name, best_model_pipeline)
     """
-    print(f"\n🚀 **TRAINING PIPELINE**")
+        print(f"\n🚀 **TRAINING PIPELINE**")
     print(f"Dataset: {dataset_name}")
     print(f"Train shape: {X_train.shape}, Test shape: {X_test.shape}")
     print(f"Classes: {len(np.unique(y_train))}")
@@ -1227,7 +1368,6 @@ def run_training_pipeline(
     if use_partial_fit:
         print(f"Batch Size: {batch_size}")
     
-    # 🆕 Print tuning info
     if enable_tuning:
         print(f"🔧 Hyperparameter Tuning: ENABLED ({optimization.upper()})")
         print(f"   CV Folds: {cv_folds}")
@@ -1248,11 +1388,71 @@ def run_training_pipeline(
     # Create pipelines
     models = create_ml_pipelines(selected_models=selected_models, use_partial_fit=use_partial_fit)
     
+    # ✅ VALIDATE CONFIGURATION
+    print(f"\n🔍 **VALIDATING CONFIGURATION**")
+    config_status = validate_training_config(models, use_partial_fit, enable_tuning, optimization)
+    
+    # Print warnings
+    if config_status['warnings']:
+        print("\n" + "="*60)
+        for warning in config_status['warnings']:
+            print(warning)
+    
+    # Print recommendations
+    if config_status['recommendations']:
+        for rec in config_status['recommendations']:
+            print(rec)
+        print("="*60)
+    
+    # ✅ HANDLE CONFLICT
+    skip_tuning_models = set()
+    
+    if config_status['has_conflict']:
+        if auto_skip_conflict:
+            print(f"\n🤖 AUTO-HANDLING ENABLED:")
+            print(f"   ✅ Will SKIP tuning for: {', '.join(config_status['skip_tuning_for'])}")
+            print(f"   ✅ Will USE tuning for: {', '.join(config_status['non_partial_fit_models'])}")
+            print(f"   ℹ️  Partial_fit models will use default parameters + partial_fit training")
+            skip_tuning_models = set(config_status['skip_tuning_for'])
+        else:
+            print(f"\n❓ USER DECISION REQUIRED:")
+            print(f"   Options:")
+            print(f"   [1] Skip tuning for partial_fit models (RECOMMENDED)")
+            print(f"   [2] Disable partial_fit and tune all models (may crash if dataset large)")
+            print(f"   [3] Continue anyway (NOT RECOMMENDED - may crash)")
+            
+            try:
+                choice = input(f"\n   Enter choice (1/2/3, default=1): ").strip() or '1'
+                
+                if choice == '1':
+                    print(f"\n   ✅ Skipping tuning for: {', '.join(config_status['skip_tuning_for'])}")
+                    skip_tuning_models = set(config_status['skip_tuning_for'])
+                elif choice == '2':
+                    print(f"\n   ⚠️  Disabling partial_fit for ALL models")
+                    use_partial_fit = False
+                    skip_tuning_models = set()
+                elif choice == '3':
+                    print(f"\n   ⚠️  Continuing with conflict (HIGH RISK OF CRASH!)")
+                    skip_tuning_models = set()
+                else:
+                    print(f"\n   ⚠️  Invalid choice. Defaulting to option 1.")
+                    skip_tuning_models = set(config_status['skip_tuning_for'])
+            except:
+                print(f"\n   ⚠️  Input error. Defaulting to skip tuning for partial_fit models.")
+                skip_tuning_models = set(config_status['skip_tuning_for'])
+    
+    print("\n" + "="*60)
+    print(f"🚦 **FINAL CONFIGURATION:**")
+    print(f"   Models to tune: {', '.join([m for m in models.keys() if m not in skip_tuning_models]) or 'NONE'}")
+    print(f"   Models to skip tuning: {', '.join(skip_tuning_models) or 'NONE'}")
+    print("="*60 + "\n")
+    
+    # Continue with training loop
     results = []
     all_predictions = []
     all_probabilities = []
     trained_models = {}
-    tuning_results = {}  # 🆕 Store tuning results
+    tuning_results = {}
     
     for model_name, pipeline in tqdm(models.items(), desc="Training models"):
         model_path = os.path.join(dataset_output_dir, f"{model_name}_model.pkl")
@@ -1270,9 +1470,13 @@ def run_training_pipeline(
             tracemalloc.start()
             mem_samples_train = []
             
+            # ✅ CHECK: Skip tuning for this model?
+            should_skip_tuning = model_name in skip_tuning_models
+            
             try:
-                # 🆕 HYPERPARAMETER TUNING
-                if enable_tuning and optimization != 'none':
+                # ✅ HYPERPARAMETER TUNING (with skip logic)
+                if enable_tuning and optimization != 'none' and not should_skip_tuning:
+                    print(f"   🔧 Tuning enabled for {model_name}")
                     tuned_pipeline, best_params, cv_results = tune_hyperparameters(
                         pipeline=pipeline,
                         X_train=X_train,
@@ -1300,6 +1504,29 @@ def run_training_pipeline(
                             for param, value in best_params.items():
                                 f.write(f"{param}: {value}\n")
                         print(f"   💾 Best parameters saved: {params_path}")
+                
+                elif should_skip_tuning:
+                    print(f"   ⏭️  SKIPPING tuning for {model_name} (partial_fit conflict)")
+                    print(f"   ℹ️  Using default parameters")
+                    
+                    # Regular training without tuning
+                    supports_partial_fit = hasattr(pipeline, '_supports_partial_fit') and pipeline._supports_partial_fit
+                    
+                    if use_partial_fit and supports_partial_fit:
+                        print(f"   🔄 Training with partial_fit (batch_size={batch_size})")
+                        X_train_scaled = pipeline.named_steps['scaler'].fit_transform(X_train)
+                        classifier = pipeline.named_steps['classifier']
+                        classifier = partial_fit_model(
+                            classifier, 
+                            X_train_scaled, 
+                            y_train, 
+                            batch_size=batch_size,
+                            model_name=model_name
+                        )
+                        pipeline.named_steps['classifier'] = classifier
+                    else:
+                        print(f"   🔄 Training with regular fit()")
+                        pipeline.fit(X_train, y_train)
                 
                 else:
                     # Regular training without tuning
@@ -1559,6 +1786,18 @@ if __name__ == "__main__":
             create_plots=True
         )
 
+        """
+        Ketika menggunakan tuning hyperparameter, Anda dapat memilih antara beberapa metode optimasi:
+        1. Grid Search (Exhaustive): Mencoba semua kombinasi parameter yang ditentukan dalam grid.
+        2. Randomized Search (Smart): Mencoba sejumlah kombinasi parameter secara acak dari distribusi yang ditentukan.
+        3. Bayesian Optimization (Smart): Menggunakan pendekatan berbasis probabilitas untuk memilih kombinasi parameter yang menjanjikan berdasarkan hasil sebelumnya.
+        Pilihan metode tergantung pada ukuran ruang parameter dan sumber daya komputasi yang tersedia.
+
+        Pastikan untuk menyesuaikan parameter tuning sesuai dengan kebutuhan dan karakteristik dataset Anda.
+
+        Ada potensi crash jika menggunakan partial_fit bersamaan dengan tuning hyperparameter, jadi disarankan untuk menggunakan fit biasa saat melakukan tuning.
+
+        """
         # Example 4: Tuning Using Grid search (Exhaustive)
         results_df, best_model_name, best_model = run_training_pipeline(
             X_train=data['X_train'],
@@ -1601,4 +1840,23 @@ if __name__ == "__main__":
             optimization='bayesian',  # BayesianOptimization
             cv_folds=3,
             n_iter=20  # Try 20 random combinations
+        )
+
+        # Example for auto_skip conflict
+        results_df, best_model_name, best_model = run_training_pipeline(
+            X_train=data['X_train'],
+            X_test=data['X_test'],
+            y_train=data['y_train'],
+            y_test=data['y_test'],
+            dataset_name='auto_skip_dataset',
+            selected_models=['RandomForest', 'NaiveBayes', 'SGD', 'XGBoost'],
+            
+            use_partial_fit=True,
+            enable_tuning=True,
+            optimization='random',
+            cv_folds=3,
+            n_iter=30,
+            
+            auto_skip_conflict=True  # ✅ AUTO: Skip tuning for NaiveBayes & SGD
+            #auto_skip_conflict=False  # ⚠️ ASK USER
         )
