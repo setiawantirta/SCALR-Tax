@@ -348,13 +348,6 @@ class PlottingManager:
                 
                 cbar = plt.colorbar(sm, ax=ax, pad=0.02)
                 cbar.set_label('Class Label', fontsize=11, fontweight='bold')
-                
-                # Add text info
-                # ax.text(1.02, 0.98, f'{n_classes} classes', 
-                #        transform=ax.transAxes, 
-                #        fontsize=10, 
-                #        verticalalignment='top',
-                #        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
             
             ax.grid(True, alpha=0.3, linestyle='--')
             
@@ -378,8 +371,8 @@ class PlottingManager:
     
     def plot_pca_feature_space_3d(self, X_transformed, y, level, kmer, method, output_dir, split='train'):
         """
-        🎨 Plot PCA/Feature Space 3D dengan SEMUA LABEL (bonus)
-        FIXED: Legend dan PC3 tidak terpotong
+        🎨 Plot PCA/Feature Space 3D dengan SEMUA LABEL
+        FIXED: Legend di kanan, colorbar untuk banyak label
         """
         try:
             if X_transformed.shape[1] < 3:
@@ -397,17 +390,17 @@ class PlottingManager:
             # Create 3D figure with adjusted size
             from mpl_toolkits.mplot3d import Axes3D
             
-            # ✅ LARGER FIGURE SIZE untuk prevent clipping
+            # ✅ LARGER FIGURE SIZE
             if n_classes <= 10:
                 figsize = (18, 12)
-            elif n_classes <= 20:
+            elif n_classes <= 30:
                 figsize = (20, 14)
             else:
                 figsize = (22, 16)
             
             fig = plt.figure(figsize=figsize)
             
-            # ✅ ADJUST SUBPLOT POSITION - Lebih ke kiri untuk beri ruang legend
+            # ✅ ADJUST SUBPLOT POSITION - Lebih ke kiri untuk beri ruang legend/colorbar
             ax = fig.add_subplot(111, projection='3d', position=[0.05, 0.05, 0.65, 0.9])
             
             # Generate colors
@@ -416,30 +409,97 @@ class PlottingManager:
             else:
                 colors = plt.cm.rainbow(np.linspace(0, 1, n_classes))
             
-            # Plot each class
-            for idx, cls in enumerate(unique_classes):
-                mask = y_plot == cls
-                n_samples_class = np.sum(mask)
+            # ✅ LOGIC: Legend (<= 30 classes) vs Colorbar (> 30 classes)
+            if n_classes <= 30:
+                # ========================================
+                # OPTION A: LEGEND DI KANAN (≤30 classes)
+                # ========================================
+                print(f"   🎨 Using LEGEND for {n_classes} classes (right side)")
                 
-                ax.scatter(
-                    X_plot[mask, 0], 
-                    X_plot[mask, 1],
-                    X_plot[mask, 2],
-                    c=[colors[idx % len(colors)]], 
-                    label=f'Class {cls} (n={n_samples_class})',
+                # Plot each class
+                for idx, cls in enumerate(unique_classes):
+                    mask = y_plot == cls
+                    n_samples_class = np.sum(mask)
+                    
+                    ax.scatter(
+                        X_plot[mask, 0], 
+                        X_plot[mask, 1],
+                        X_plot[mask, 2],
+                        c=[colors[idx % len(colors)]], 
+                        label=f'Class {cls} (n={n_samples_class})',
+                        alpha=0.6,
+                        s=20,
+                        edgecolors='black',
+                        linewidth=0.2
+                    )
+                
+                # ✅ LEGEND DI KANAN (BUKAN DI BAWAH!)
+                # Adjust ncol based on number of classes
+                if n_classes <= 15:
+                    ncol = 1
+                    fontsize = 8
+                elif n_classes <= 25:
+                    ncol = 2
+                    fontsize = 7
+                else:
+                    ncol = 2
+                    fontsize = 6
+                
+                ax.legend(
+                    loc='upper left', 
+                    bbox_to_anchor=(1.15, 1.0),  # Di kanan plot
+                    fontsize=fontsize,
+                    frameon=True,
+                    fancybox=True,
+                    shadow=True,
+                    borderaxespad=0,
+                    ncol=ncol  # Multiple columns if needed
+                )
+                
+            else:
+                # ========================================
+                # OPTION B: COLORBAR DI KANAN (>30 classes)
+                # ========================================
+                print(f"   🎨 Using COLORBAR for {n_classes} classes (too many for legend)")
+                
+                from matplotlib.colors import Normalize
+                from matplotlib.cm import ScalarMappable
+                
+                # Create color mapping
+                norm = Normalize(vmin=unique_classes.min(), vmax=unique_classes.max())
+                cmap = plt.cm.rainbow
+                
+                # Plot dengan colormap
+                scatter = ax.scatter(
+                    X_plot[:, 0], 
+                    X_plot[:, 1],
+                    X_plot[:, 2],
+                    c=y_plot,  # Color by label
+                    cmap=cmap,
+                    norm=norm,
                     alpha=0.6,
                     s=20,
                     edgecolors='black',
                     linewidth=0.2
                 )
+                
+                # ✅ ADD COLORBAR DI KANAN
+                cbar = fig.colorbar(
+                    scatter, 
+                    ax=ax, 
+                    pad=0.1,  # Distance from plot
+                    shrink=0.8,  # Size of colorbar
+                    aspect=20  # Aspect ratio
+                )
+                cbar.set_label('Class Label', fontsize=11, fontweight='bold', rotation=270, labelpad=20)
+                cbar.ax.tick_params(labelsize=8)
             
             # ✅ STYLING dengan extra padding untuk axis labels
-            ax.set_xlabel('PC1', fontsize=12, fontweight='bold', labelpad=15)  # Increased labelpad
+            ax.set_xlabel('PC1', fontsize=12, fontweight='bold', labelpad=15)
             ax.set_ylabel('PC2', fontsize=12, fontweight='bold', labelpad=15)
-            ax.set_zlabel('PC3', fontsize=12, fontweight='bold', labelpad=15)  # Increased labelpad
+            ax.set_zlabel('PC3', fontsize=12, fontweight='bold', labelpad=15)
             
             # ✅ ADJUST AXIS LIMITS untuk prevent clipping
-            # Add some padding to z-axis
             z_min, z_max = X_plot[:, 2].min(), X_plot[:, 2].max()
             z_range = z_max - z_min
             ax.set_zlim(z_min - 0.1 * z_range, z_max + 0.1 * z_range)
@@ -448,34 +508,14 @@ class PlottingManager:
                     f'{len(X_plot):,} samples | {n_classes} classes')
             ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
             
-            # ✅ LEGEND POSITIONING - Di luar plot area
-            if n_classes <= 20:
-                # Legend di kanan plot dengan positioning yang jelas
-                ax.legend(
-                    loc='upper left', 
-                    bbox_to_anchor=(1.15, 1.0),  # Adjusted position
-                    fontsize=8,
-                    frameon=True,
-                    fancybox=True,
-                    shadow=True,
-                    borderaxespad=0
-                )
-            else:
-                # Terlalu banyak kelas: legend di bawah plot
-                ax.legend(
-                    loc='upper center',
-                    bbox_to_anchor=(0.5, -0.05),
-                    fontsize=7,
-                    ncol=min(5, n_classes // 4),
-                    frameon=True,
-                    fancybox=True
-                )
-            
             # ✅ ADJUST VIEW ANGLE untuk better visibility
             ax.view_init(elev=20, azim=45)  # Optimal viewing angle
             
+            # Grid
+            ax.grid(True, alpha=0.3, linestyle='--')
+            
             # ✅ TIGHT LAYOUT dengan extra padding
-            plt.tight_layout(pad=2.0)  # Extra padding
+            plt.tight_layout(pad=2.0)
             
             # Save dengan bbox_inches='tight' untuk capture semua elements
             filename = f"pca_feature_space_3d_{split}.{self.plot_format}"
@@ -609,8 +649,6 @@ class PlottingManager:
             print(f"⚠️  Failed to create class separation heatmap: {e}")
             plt.close('all')
             return None
-    
-    # ... (keep existing plot_2d_projection and plot_summary_comparison methods)
     
     def plot_2d_projection(self, X_transformed, y, level, kmer, method, output_dir):
         """Plot 2D projection dengan memory safety"""
