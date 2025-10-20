@@ -377,7 +377,8 @@ def get_param_grid(model_name, search_type='grid'):
                 'classifier__n_estimators': [50, 100, 200],
                 'classifier__max_depth': [10, 20, 30, None],
                 'classifier__min_samples_split': [2, 5, 10],
-                'classifier__min_samples_leaf': [1, 2, 4]
+                'classifier__min_samples_leaf': [1, 2, 4],
+                'classifier__class_weight': ['balanced']
             },
             'XGBoost': {
                 'classifier__n_estimators': [50, 100, 200],
@@ -389,7 +390,7 @@ def get_param_grid(model_name, search_type='grid'):
             'SVC': {
                 'classifier__C': [0.1, 1, 10],
                 'classifier__kernel': ['linear', 'rbf'],
-                'classifier__gamma': ['scale', 'auto']
+                'classifier__gamma': ['scale', 'auto'],
             },
             'LightGBM': {
                 'classifier__n_estimators': [50, 100, 200],
@@ -452,6 +453,7 @@ def get_param_grid(model_name, search_type='grid'):
     
     elif search_type == 'bayesian':
         # BayesSearchCV - Continuous & Categorical
+        from scipy.stats import uniform, randint
         if not BAYESIAN_AVAILABLE:
             raise ImportError("scikit-optimize not installed. Cannot use Bayesian optimization.")
         
@@ -459,10 +461,14 @@ def get_param_grid(model_name, search_type='grid'):
             'KNN': {
                 'classifier__n_neighbors': Integer(3, 15),
                 'classifier__weights': Categorical(['uniform', 'distance']),
-                'classifier__metric': Categorical(['euclidean', 'manhattan'])
+                'classifier__metric': Categorical(['euclidean', 'manhattan', 'minkowski', 'chebyshev']),
+                'classifier__p': Integer(1, 6),
+                'classifier__leaf_size': Integer(10, 51),
+                'classifier__algorithm': Categorical(['ball_tree', 'kd_tree', 'brute']),
             },
             'NaiveBayes': {
-                'classifier__var_smoothing': Real(1e-10, 1e-5, prior='log-uniform')
+                'classifier__var_smoothing': Real(1e-10, 1e-5, prior='log-uniform'),
+                #'classifier__var_smoothing': uniform(1e-12, 1e-3)
             },
             'RandomForest': {
                 'classifier__n_estimators': Integer(50, 300),
@@ -1309,7 +1315,7 @@ def run_training_pipeline(
     enable_tuning=False,
     optimization='grid',  # 'grid', 'random', 'bayesian', or 'none'
     cv_folds=3,
-    n_iter=20  # For random/bayesian search
+    n_iter=20,  # For random/bayesian search
 
     # 🆕 NEW PARAMETER: Auto-handling
     auto_skip_conflict=True  # Automatically skip tuning for partial_fit models if conflict
@@ -1360,7 +1366,7 @@ def run_training_pipeline(
     --------
     tuple : (results_df, best_model_name, best_model_pipeline)
     """
-        print(f"\n🚀 **TRAINING PIPELINE**")
+    print(f"\n🚀 **TRAINING PIPELINE**")
     print(f"Dataset: {dataset_name}")
     print(f"Train shape: {X_train.shape}, Test shape: {X_test.shape}")
     print(f"Classes: {len(np.unique(y_train))}")

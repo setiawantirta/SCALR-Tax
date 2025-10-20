@@ -1,21 +1,33 @@
+import os
+import gc
+import sys
+import psutil
+import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from tqdm import tqdm
+import pickle
+import joblib
 import time
-import psutil
-import gc
+import tracemalloc
+
+from tqdm import tqdm
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any  # 👈 TAMBAHKAN Any
+from dataclasses import dataclass, field
 from scipy import sparse
-import warnings
+
 warnings.filterwarnings('ignore')
 
 from sklearn.decomposition import IncrementalPCA, TruncatedSVD
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
+from scipy.spatial.distance import pdist
+from scipy.stats import pearsonr
+from sklearn.metrics import mean_squared_error
+from sklearn.neighbors import NearestNeighbors
 
 # Optional imports
 try:
@@ -116,7 +128,7 @@ class BenchmarkConfig:
         enable_sampling: bool = False,  # Enable stratified sampling
         sampling_kmer_threshold: int = 8,  # Apply sampling for k >= 8
         sampling_percentage: float = 0.1,  # 10% per class
-        min_samples_per_class = 2,  # ✅ Can be int or 'disable'
+        min_samples_per_class: int = 2,  # Minimum samples to keep class
         max_samples_per_class: int = None,  # Optional max limit
 
         # Processing parameters - MEMORY SAFE DEFAULTS
@@ -164,26 +176,11 @@ class BenchmarkConfig:
         self.enable_memory_monitoring = enable_memory_monitoring
         self.emergency_stop_threshold = emergency_stop_threshold
 
-        # ✅ HANDLE min_samples_per_class: int or 'disable'
-        if isinstance(min_samples_per_class, str):
-            if min_samples_per_class.lower() == 'disable':
-                self.min_samples_per_class = 'disable'
-                print("ℹ️  min_samples_per_class set to 'disable' - ALL samples from ALL classes will be used")
-            else:
-                raise ValueError(f"Invalid min_samples_per_class string: '{min_samples_per_class}'. Use 'disable' or integer.")
-        elif isinstance(min_samples_per_class, (int, float)):
-            if min_samples_per_class < 0:
-                raise ValueError(f"min_samples_per_class must be >= 0, got {min_samples_per_class}")
-            self.min_samples_per_class = int(min_samples_per_class)
-            if self.min_samples_per_class == 0:
-                print("⚠️  WARNING: min_samples_per_class=0 may cause errors. Consider using 'disable' or 1.")
-        else:
-            raise TypeError(f"min_samples_per_class must be int or 'disable', got {type(min_samples_per_class)}")
-
-        # Sampling config
+        # 🆕 Sampling config
         self.enable_sampling = enable_sampling
         self.sampling_kmer_threshold = sampling_kmer_threshold
         self.sampling_percentage = sampling_percentage
+        self.min_samples_per_class = min_samples_per_class
         self.max_samples_per_class = max_samples_per_class
 
 # =================================================================
@@ -276,126 +273,6 @@ class StratifiedSampler:
             print(f"   ℹ️  No sampling (k-mer {kmer} < threshold {self.config.sampling_kmer_threshold})")
             return X, y, None
         
-        # ✅ CHECK IF min_samples_per_class IS DISABLED
-        if self.config.min_samples_per_class == 'disable':
-            print(f"\n{'='*60}")
-            print(f"🎲 STRATIFIED SAMPLING ACTIVATED (min_samples_per_class=DISABLE)")
-            print(f"{'='*60}")
-            print(f"   K-mer: {kmer} >= {self.config.sampling_kmer_threshold}")
-            print(f"   Level: {level}")
-            print(f"   Split: {split}")
-            print(f"   Original shape: {X.shape}")
-            print(f"   Target sampling: {self.config.sampling_percentage*100:.1f}% per class")
-            print(f"   ✅ ALL CLASSES INCLUDED (no minimum threshold)")
-            
-            # Get unique classes
-            unique_classes, class_counts = np.unique(y, return_counts=True)
-            n_classes = len(unique_classes)
-            
-            print(f"\n📊 CLASS DISTRIBUTION:")
-            print(f"   Total classes: {n_classes}")
-            print(f"   Total samples: {len(y):,}")
-            
-            # Perform sampling WITHOUT skipping ANY class
-            sampled_indices = []
-            sampling_stats = []
-            
-            print(f"\n🔄 Sampling per class (NO SKIPPING)...")
-            
-            for cls, original_count in tqdm(zip(unique_classes, class_counts), 
-                                           total=n_classes, 
-                                           desc="Sampling classes"):
-                
-                # ✅ NO SKIPPING - process ALL classes (even with 1 sample)
-                
-                # Get indices for this class
-                class_mask = (y == cls)
-                class_indices = np.where(class_mask)[0]
-                
-                # Calculate target sample size
-                target_samples = int(original_count * self.config.sampling_percentage)
-                
-                # ✅ ENSURE at least 1 sample if class exists
-                target_samples = max(1, target_samples)
-                
-                # Apply max limit if specified
-                if self.config.max_samples_per_class is not None:
-                    target_samples = min(target_samples, self.config.max_samples_per_class)
-                
-                # Don't sample more than available
-                target_samples = min(target_samples, original_count)
-                
-                # Random sampling
-                if target_samples < original_count:
-                    sampled_class_indices = np.random.choice(
-                        class_indices, 
-                        size=target_samples, 
-                        replace=False
-                    )
-                else:
-                    # Keep all samples if target >= original
-                    sampled_class_indices = class_indices
-                
-                sampled_indices.extend(sampled_class_indices)
-                
-                # Track statistics
-                sampling_stats.append({
-                    'class': cls,
-                    'original': original_count,
-                    'sampled': len(sampled_class_indices),
-                    'percentage': (len(sampled_class_indices) / original_count) * 100
-                })
-            
-            # Sort indices
-            sampled_indices = np.sort(sampled_indices)
-            
-            # Extract sampled data
-            X_sampled = X[sampled_indices]
-            y_sampled = y[sampled_indices]
-            
-            # Calculate statistics
-            total_original = len(y)
-            total_sampled = len(sampled_indices)
-            reduction_percent = (1 - total_sampled / total_original) * 100
-            
-            sampling_info = {
-                'original_samples': total_original,
-                'sampled_samples': total_sampled,
-                'reduction_percent': reduction_percent,
-                'original_classes': n_classes,
-                'valid_classes': n_classes,  # ALL classes are valid
-                'skipped_classes': 0,  # NO classes skipped
-                'per_class_stats': sampling_stats,
-                'skipped_class_ids': []  # Empty list
-            }
-            
-            # Print summary
-            print(f"\n{'='*60}")
-            print(f"✅ SAMPLING COMPLETED (ALL CLASSES INCLUDED)")
-            print(f"{'='*60}")
-            print(f"   Original: {total_original:,} samples, {n_classes} classes")
-            print(f"   Sampled:  {total_sampled:,} samples, {n_classes} classes")
-            print(f"   Reduction: {reduction_percent:.2f}%")
-            print(f"   ✅ Skipped: 0 classes (min_samples_per_class=DISABLE)")
-            
-            # Show per-class statistics
-            if sampling_stats:
-                print(f"\n📊 PER-CLASS SAMPLING (showing first 10):")
-                stats_df = pd.DataFrame(sampling_stats[:10])
-                print(stats_df.to_string(index=False))
-                
-                if len(sampling_stats) > 10:
-                    print(f"   ... and {len(sampling_stats)-10} more classes")
-                
-                # Overall statistics
-                avg_sampling = np.mean([s['percentage'] for s in sampling_stats])
-                print(f"\n   Average sampling per class: {avg_sampling:.2f}%")
-            
-            MemoryManager.force_gc()
-            
-            return X_sampled, y_sampled, sampling_info
-        
-        # ✅ ORIGINAL LOGIC: min_samples_per_class IS AN INTEGER
         print(f"\n{'='*60}")
         print(f"🎲 STRATIFIED SAMPLING ACTIVATED")
         print(f"{'='*60}")
@@ -445,35 +322,20 @@ class StratifiedSampler:
                                        total=n_classes, 
                                        desc="Sampling classes"):
             
-            # ✅ FIX 1: Skip empty classes FIRST
-            if original_count == 0:
+            # Skip small classes
+            if original_count < self.config.min_samples_per_class:
                 skipped_classes.append(cls)
-                print(f"   ⚠️  Skipping class {cls}: 0 samples")
                 continue
-            
-            # ✅ FIX 2: Skip small classes based on threshold
-            if self.config.min_samples_per_class > 0:
-                if original_count < self.config.min_samples_per_class:
-                    skipped_classes.append(cls)
-                    continue
             
             # Get indices for this class
             class_mask = (y == cls)
             class_indices = np.where(class_mask)[0]
             
             # Calculate target sample size
-            target_samples = int(original_count * self.config.sampling_percentage)
-            
-            # ✅ FIX 3: ENFORCE MINIMUM based on min_samples_per_class
-            if self.config.min_samples_per_class == 0:
-                # If min=0, ensure at least 1 sample
-                target_samples = max(1, target_samples)
-            else:
-                # Respect min_samples_per_class
-                target_samples = max(
-                    self.config.min_samples_per_class,
-                    target_samples
-                )
+            target_samples = max(
+                self.config.min_samples_per_class,
+                int(original_count * self.config.sampling_percentage)
+            )
             
             # Apply max limit if specified
             if self.config.max_samples_per_class is not None:
@@ -481,12 +343,6 @@ class StratifiedSampler:
             
             # Don't sample more than available
             target_samples = min(target_samples, original_count)
-            
-            # ✅ FIX 4: Final safety check
-            if target_samples <= 0:
-                skipped_classes.append(cls)
-                print(f"   ⚠️  Skipping class {cls}: target_samples={target_samples}")
-                continue
             
             # Random sampling
             if target_samples < original_count:
@@ -556,7 +412,587 @@ class StratifiedSampler:
         MemoryManager.force_gc()
         
         return X_sampled, y_sampled, sampling_info
+
+
+# =================================================================
+# COMPREHENSIVE DIMENSIONALITY ANALYZER - NEW!
+# =================================================================
+
+class DimensionalityAnalyzer:
+    """
+    📊 Comprehensive analysis untuk evaluasi kualitas reduksi dimensi
     
+    Metrics:
+    1. Reconstruction Error (MSE) - Seberapa baik rekonstruksi
+    2. Pairwise Distance Correlation - Preservasi struktur jarak
+    3. Intrinsic Dimensionality - Estimasi dimensi intrinsik
+    4. Time Execution - Waktu komputasi
+    5. Peak Memory Usage - Penggunaan memori maksimal
+    """
+    
+    def __init__(self, output_dir: Path):
+        """Initialize analyzer dengan output directory"""
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.metrics_history = {
+            'n_components': [],
+            'mse': [],
+            'distance_corr': [],
+            'intrinsic_dim': [],
+            'time': [],
+            'memory': []
+        }
+        
+        print(f"   📊 DimensionalityAnalyzer initialized")
+        print(f"      Output: {self.output_dir}")
+    
+    def compute_reconstruction_error(self, X_original: np.ndarray, 
+                                    X_reduced: np.ndarray, 
+                                    model: Any) -> Optional[float]:
+        """
+        1️⃣ Hitung Reconstruction Error (MSE)
+        
+        MSE = mean((X_original - X_reconstructed)^2)
+        
+        Args:
+            X_original: Data asli (dense)
+            X_reduced: Data hasil reduksi
+            model: Model dengan inverse_transform
+            
+        Returns:
+            float: Mean Squared Error
+        """
+        try:
+            if not hasattr(model, 'inverse_transform'):
+                return None
+            
+            # Reconstruct dari reduced space
+            X_reconstructed = model.inverse_transform(X_reduced)
+            
+            # Hitung MSE
+            mse = mean_squared_error(X_original, X_reconstructed)
+            
+            return mse
+            
+        except Exception as e:
+            print(f"      ⚠️  Reconstruction error failed: {str(e)[:50]}")
+            return None
+    
+    def compute_distance_correlation(self, X_original: np.ndarray, 
+                                     X_reduced: np.ndarray, 
+                                     sample_size: int = 2000) -> Optional[float]:
+        """
+        2️⃣ Hitung Pairwise Distance Correlation
+        
+        Mengukur seberapa baik jarak antar titik dipertahankan setelah reduksi.
+        Correlation(dist_original, dist_reduced)
+        
+        Args:
+            X_original: Data asli (dense)
+            X_reduced: Data hasil reduksi
+            sample_size: Jumlah sample untuk efisiensi
+            
+        Returns:
+            float: Pearson correlation coefficient (0-1)
+        """
+        try:
+            # Sampling untuk efisiensi
+            n_samples = min(sample_size, X_original.shape[0])
+            
+            if n_samples < 100:
+                return None
+            
+            np.random.seed(42)
+            indices = np.random.choice(X_original.shape[0], n_samples, replace=False)
+            
+            X_orig_sample = X_original[indices]
+            X_red_sample = X_reduced[indices]
+            
+            # Hitung pairwise euclidean distances
+            dist_original = pdist(X_orig_sample, metric='euclidean')
+            dist_reduced = pdist(X_red_sample, metric='euclidean')
+            
+            # Pearson correlation
+            correlation, p_value = pearsonr(dist_original, dist_reduced)
+            
+            return correlation
+            
+        except Exception as e:
+            print(f"      ⚠️  Distance correlation failed: {str(e)[:50]}")
+            return None
+    
+    def estimate_intrinsic_dimensionality(self, X_reduced: np.ndarray, 
+                                         k: int = 10) -> Optional[float]:
+        """
+        3️⃣ Estimasi Intrinsic Dimensionality menggunakan MLE
+        
+        Based on: Levina & Bickel (2005)
+        Estimasi dimensi intrinsik dari data di reduced space
+        
+        Args:
+            X_reduced: Data hasil reduksi
+            k: Jumlah nearest neighbors
+            
+        Returns:
+            float: Estimated intrinsic dimensionality
+        """
+        try:
+            # Adjust k jika terlalu besar
+            if k >= X_reduced.shape[0]:
+                k = max(2, X_reduced.shape[0] // 10)
+            
+            # Fit nearest neighbors
+            nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='auto').fit(X_reduced)
+            distances, _ = nbrs.kneighbors(X_reduced)
+            
+            # Remove self (distance = 0)
+            distances = distances[:, 1:]
+            
+            # MLE estimation
+            r_k = distances[:, -1]  # k-th nearest neighbor distance
+            
+            # Avoid log(0) and division by zero
+            epsilon = 1e-10
+            r_k = np.maximum(r_k, epsilon)
+            distances = np.maximum(distances, epsilon)
+            
+            # Compute log ratios
+            log_ratios = np.log(r_k[:, np.newaxis] / distances)
+            sum_log_ratios = np.sum(log_ratios, axis=1)
+            
+            # Avoid division by zero
+            sum_log_ratios = np.where(sum_log_ratios > epsilon, sum_log_ratios, epsilon)
+            
+            # Intrinsic dimensionality per sample
+            d_hat_samples = (k - 1) / sum_log_ratios
+            
+            # Filter outliers
+            valid_mask = (d_hat_samples > 0) & (d_hat_samples < X_reduced.shape[1] * 3)
+            d_hat_samples = d_hat_samples[valid_mask]
+            
+            if len(d_hat_samples) == 0:
+                return None
+            
+            # Use median untuk robustness
+            intrinsic_dim = np.median(d_hat_samples)
+            
+            return intrinsic_dim
+            
+        except Exception as e:
+            print(f"      ⚠️  Intrinsic dimensionality failed: {str(e)[:50]}")
+            return None
+    
+    def record_metrics(self, n_components: int, X_original: np.ndarray, 
+                      X_reduced: np.ndarray, model: Any, 
+                      elapsed_time: float, peak_memory: float):
+        """
+        📝 Record all metrics untuk n_components tertentu
+        
+        Args:
+            n_components: Jumlah komponen
+            X_original: Data asli (sample untuk MSE & correlation)
+            X_reduced: Data hasil reduksi
+            model: Fitted model
+            elapsed_time: Waktu eksekusi (detik)
+            peak_memory: Peak memory usage (bytes)
+        """
+        print(f"\n   🔬 Computing comprehensive metrics for n={n_components}...")
+        
+        # Sample data untuk MSE & correlation (max 5000 samples)
+        max_samples = min(5000, X_original.shape[0])
+        indices = np.random.choice(X_original.shape[0], max_samples, replace=False)
+        X_orig_sample = X_original[indices]
+        X_red_sample = X_reduced[indices]
+        
+        # 1. Reconstruction Error
+        print(f"      1️⃣  Computing MSE...")
+        mse = self.compute_reconstruction_error(X_orig_sample, X_red_sample, model)
+        if mse is not None:
+            print(f"         ✅ MSE: {mse:.6f}")
+        
+        # 2. Distance Correlation
+        print(f"      2️⃣  Computing distance correlation...")
+        dist_corr = self.compute_distance_correlation(X_orig_sample, X_red_sample, sample_size=2000)
+        if dist_corr is not None:
+            print(f"         ✅ Correlation: {dist_corr:.4f}")
+        
+        # 3. Intrinsic Dimensionality
+        print(f"      3️⃣  Estimating intrinsic dimensionality...")
+        intrinsic_dim = self.estimate_intrinsic_dimensionality(X_reduced, k=10)
+        if intrinsic_dim is not None:
+            print(f"         ✅ Intrinsic dim: {intrinsic_dim:.2f}")
+        
+        # 4. Time & Memory
+        print(f"      4️⃣  Time: {elapsed_time:.2f}s | Memory: {peak_memory/(1024**2):.2f} MB")
+        
+        # Store metrics
+        self.metrics_history['n_components'].append(n_components)
+        self.metrics_history['mse'].append(mse)
+        self.metrics_history['distance_corr'].append(dist_corr)
+        self.metrics_history['intrinsic_dim'].append(intrinsic_dim)
+        self.metrics_history['time'].append(elapsed_time)
+        self.metrics_history['memory'].append(peak_memory)
+    
+    def plot_reconstruction_error(self, level: str, kmer: int, method: str):
+        """📊 Plot MSE vs n_components"""
+        try:
+            n_comps = self.metrics_history['n_components']
+            mse_vals = [v for v in self.metrics_history['mse'] if v is not None]
+            n_comps_valid = [n_comps[i] for i, v in enumerate(self.metrics_history['mse']) if v is not None]
+            
+            if not mse_vals:
+                print("      ⚠️  No MSE data to plot")
+                return
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(n_comps_valid, mse_vals, marker='o', linewidth=2.5, markersize=8, 
+                   color='#E63946', label='Reconstruction MSE')
+            
+            ax.set_xlabel('Number of Components', fontsize=13, fontweight='bold')
+            ax.set_ylabel('Mean Squared Error', fontsize=13, fontweight='bold')
+            ax.set_title(f'Reconstruction Error vs Components\n{level.upper()} | k={kmer} | {method.upper()}', 
+                        fontsize=14, fontweight='bold', pad=15)
+            ax.grid(True, alpha=0.3, linestyle='--')
+            ax.legend(fontsize=11)
+            
+            plt.tight_layout()
+            filepath = self.output_dir / f'analysis_reconstruction_error_{level}_k{kmer}_{method}.png'
+            plt.savefig(filepath, dpi=300, bbox_inches='tight', facecolor='white')
+            plt.close()
+            
+            print(f"      ✅ MSE plot: {filepath.name}")
+            
+        except Exception as e:
+            print(f"      ❌ MSE plot failed: {e}")
+            plt.close('all')
+    
+    def plot_distance_correlation(self, level: str, kmer: int, method: str):
+        """📊 Plot distance correlation vs n_components"""
+        try:
+            n_comps = self.metrics_history['n_components']
+            corr_vals = [v for v in self.metrics_history['distance_corr'] if v is not None]
+            n_comps_valid = [n_comps[i] for i, v in enumerate(self.metrics_history['distance_corr']) if v is not None]
+            
+            if not corr_vals:
+                print("      ⚠️  No correlation data to plot")
+                return
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(n_comps_valid, corr_vals, marker='s', linewidth=2.5, markersize=8, 
+                   color='#06A77D', label='Distance Correlation')
+            ax.axhline(y=0.9, color='red', linestyle='--', linewidth=2, 
+                      label='Target: 0.9', alpha=0.7)
+            
+            ax.set_xlabel('Number of Components', fontsize=13, fontweight='bold')
+            ax.set_ylabel('Pearson Correlation', fontsize=13, fontweight='bold')
+            ax.set_title(f'Pairwise Distance Correlation vs Components\n{level.upper()} | k={kmer} | {method.upper()}', 
+                        fontsize=14, fontweight='bold', pad=15)
+            ax.set_ylim(0, 1.05)
+            ax.grid(True, alpha=0.3, linestyle='--')
+            ax.legend(fontsize=11)
+            
+            plt.tight_layout()
+            filepath = self.output_dir / f'analysis_distance_correlation_{level}_k{kmer}_{method}.png'
+            plt.savefig(filepath, dpi=300, bbox_inches='tight', facecolor='white')
+            plt.close()
+            
+            print(f"      ✅ Distance correlation plot: {filepath.name}")
+            
+        except Exception as e:
+            print(f"      ❌ Correlation plot failed: {e}")
+            plt.close('all')
+    
+    def plot_intrinsic_dimensionality(self, level: str, kmer: int, method: str):
+        """
+        📊 Plot intrinsic dimensionality vs n_components (Nature journal style)
+        
+        Enhanced features:
+        - Multi-panel layout showing different perspectives
+        - Confidence intervals from k-NN variance
+        - Efficiency ratio (intrinsic_dim / n_components)
+        - Professional styling matching Nature publications
+        """
+        try:
+            n_comps = self.metrics_history['n_components']
+            intrinsic_vals = [v for v in self.metrics_history['intrinsic_dim'] if v is not None]
+            n_comps_valid = [n_comps[i] for i, v in enumerate(self.metrics_history['intrinsic_dim']) if v is not None]
+            
+            if not intrinsic_vals:
+                print("      ⚠️  No intrinsic dim data to plot")
+                return
+            
+            # ============================================
+            # NATURE STYLE: 2x2 Multi-panel Figure
+            # ============================================
+            fig = plt.figure(figsize=(14, 10))
+            
+            # Set Nature-style parameters
+            plt.rcParams['font.family'] = 'sans-serif'
+            plt.rcParams['font.sans-serif'] = ['Arial', 'Helvetica']
+            plt.rcParams['font.size'] = 11
+            plt.rcParams['axes.linewidth'] = 1.2
+            
+            # ============================================
+            # PANEL A: Intrinsic Dimensionality vs Components
+            # ============================================
+            ax1 = plt.subplot(2, 2, 1)
+            
+            # Plot estimated intrinsic dimensionality
+            ax1.plot(n_comps_valid, intrinsic_vals, 
+                    marker='o', linewidth=2.5, markersize=8, 
+                    color='#2E86AB', label='Estimated Intrinsic Dim',
+                    markerfacecolor='white', markeredgewidth=2)
+            
+            # Plot reference line (y=x)
+            ax1.plot(n_comps_valid, n_comps_valid, 
+                    '--', linewidth=2, alpha=0.5, 
+                    color='#E63946', label='Reference (y=x)')
+            
+            # Highlight optimal region (where intrinsic_dim stabilizes)
+            if len(intrinsic_vals) > 3:
+                # Find stabilization point (where change < 5%)
+                changes = np.abs(np.diff(intrinsic_vals))
+                relative_changes = changes / (np.array(intrinsic_vals[:-1]) + 1e-10)
+                
+                stable_idx = np.where(relative_changes < 0.05)[0]
+                if len(stable_idx) > 0:
+                    optimal_idx = stable_idx[0]
+                    ax1.axvline(x=n_comps_valid[optimal_idx], 
+                            color='#06A77D', linestyle=':', linewidth=2.5,
+                            label=f'Stabilization ({n_comps_valid[optimal_idx]} comp.)')
+                    
+                    # Add annotation
+                    ax1.annotate(f'Intrinsic dim ≈ {intrinsic_vals[optimal_idx]:.1f}',
+                                xy=(n_comps_valid[optimal_idx], intrinsic_vals[optimal_idx]),
+                                xytext=(10, 20), textcoords='offset points',
+                                bbox=dict(boxstyle='round,pad=0.5', fc='#06A77D', alpha=0.3, edgecolor='none'),
+                                arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0.3', 
+                                            color='#06A77D', lw=2),
+                                fontsize=10, fontweight='bold', color='#06A77D')
+            
+            ax1.set_xlabel('Number of Components', fontsize=12, fontweight='bold')
+            ax1.set_ylabel('Estimated Intrinsic Dimensionality', fontsize=12, fontweight='bold')
+            ax1.set_title('A. Intrinsic Dimensionality Estimation', 
+                        fontsize=13, fontweight='bold', loc='left', pad=10)
+            ax1.grid(True, alpha=0.2, linestyle='-', linewidth=0.8)
+            ax1.legend(loc='best', frameon=True, framealpha=0.95, edgecolor='gray', fontsize=9)
+            ax1.spines['top'].set_visible(False)
+            ax1.spines['right'].set_visible(False)
+            
+            # ============================================
+            # PANEL B: Efficiency Ratio (intrinsic / n_components)
+            # ============================================
+            ax2 = plt.subplot(2, 2, 2)
+            
+            efficiency_ratio = [intrinsic_vals[i] / n_comps_valid[i] 
+                            for i in range(len(intrinsic_vals))]
+            
+            # Plot efficiency ratio
+            ax2.plot(n_comps_valid, efficiency_ratio, 
+                    marker='s', linewidth=2.5, markersize=7, 
+                    color='#A23B72', label='Efficiency Ratio',
+                    markerfacecolor='white', markeredgewidth=2)
+            
+            # Add optimal efficiency zone (0.7-1.0)
+            ax2.axhspan(0.7, 1.0, alpha=0.2, color='#06A77D', 
+                    label='Optimal Zone (0.7-1.0)')
+            
+            ax2.set_xlabel('Number of Components', fontsize=12, fontweight='bold')
+            ax2.set_ylabel('Efficiency Ratio\n(Intrinsic Dim / n_comp)', fontsize=12, fontweight='bold')
+            ax2.set_title('B. Dimensionality Efficiency', 
+                        fontsize=13, fontweight='bold', loc='left', pad=10)
+            ax2.grid(True, alpha=0.2, linestyle='-', linewidth=0.8)
+            ax2.legend(loc='best', frameon=True, framealpha=0.95, edgecolor='gray', fontsize=9)
+            ax2.spines['top'].set_visible(False)
+            ax2.spines['right'].set_visible(False)
+            ax2.set_ylim([0, max(efficiency_ratio) * 1.1])
+            
+            # ============================================
+            # PANEL C: Rate of Change (Derivative)
+            # ============================================
+            ax3 = plt.subplot(2, 2, 3)
+            
+            if len(intrinsic_vals) > 1:
+                # Calculate rate of change
+                rate_of_change = np.diff(intrinsic_vals) / np.diff(n_comps_valid)
+                n_comps_diff = n_comps_valid[1:]
+                
+                # Plot rate of change
+                ax3.plot(n_comps_diff, rate_of_change, 
+                        marker='^', linewidth=2.5, markersize=7, 
+                        color='#F18F01', label='Rate of Change',
+                        markerfacecolor='white', markeredgewidth=2)
+                
+                # Zero line
+                ax3.axhline(y=0, color='gray', linestyle='--', linewidth=1.5, alpha=0.5)
+                
+                # Highlight near-zero region (convergence)
+                threshold = np.max(np.abs(rate_of_change)) * 0.1
+                ax3.axhspan(-threshold, threshold, alpha=0.2, color='#06A77D',
+                        label=f'Convergence Zone (±{threshold:.3f})')
+                
+                ax3.set_xlabel('Number of Components', fontsize=12, fontweight='bold')
+                ax3.set_ylabel('Rate of Change\n(ΔIntrinsic Dim / Δn_comp)', fontsize=12, fontweight='bold')
+                ax3.set_title('C. Convergence Analysis', 
+                            fontsize=13, fontweight='bold', loc='left', pad=10)
+                ax3.grid(True, alpha=0.2, linestyle='-', linewidth=0.8)
+                ax3.legend(loc='best', frameon=True, framealpha=0.95, edgecolor='gray', fontsize=9)
+                ax3.spines['top'].set_visible(False)
+                ax3.spines['right'].set_visible(False)
+            
+            # ============================================
+            # PANEL D: Statistical Summary Box
+            # ============================================
+            ax4 = plt.subplot(2, 2, 4)
+            ax4.axis('off')
+            
+            # Calculate statistics
+            mean_intrinsic = np.mean(intrinsic_vals)
+            std_intrinsic = np.std(intrinsic_vals)
+            min_intrinsic = np.min(intrinsic_vals)
+            max_intrinsic = np.max(intrinsic_vals)
+            final_intrinsic = intrinsic_vals[-1]
+            final_n_comp = n_comps_valid[-1]
+            final_efficiency = efficiency_ratio[-1]
+            
+            # Create summary text
+            summary_text = f"""
+                📊 INTRINSIC DIMENSIONALITY SUMMARY
+                {'─'*45}
+
+                Dataset Information:
+                • Taxonomic Level: {level.upper()}
+                • K-mer Size: {kmer}
+                • Method: {method.upper()}
+
+                Statistical Analysis:
+                • Mean Intrinsic Dim: {mean_intrinsic:.2f} ± {std_intrinsic:.2f}
+                • Range: [{min_intrinsic:.2f}, {max_intrinsic:.2f}]
+                • Final Estimate: {final_intrinsic:.2f}
+
+                Optimal Configuration:
+                • Final n_components: {final_n_comp}
+                • Efficiency Ratio: {final_efficiency:.3f}
+                • Dimension Reduction: {((1 - final_intrinsic/final_n_comp)*100):.1f}%
+
+                Interpretation:
+                {'✅ Efficient: Intrinsic dim << n_components' if final_efficiency < 0.7 
+                else '⚠️  Consider reducing n_components' if final_efficiency > 1.0
+                else '✓ Balanced: Good efficiency ratio'}
+            """
+            
+            # Add text box
+            ax4.text(0.05, 0.95, summary_text, 
+                    transform=ax4.transAxes,
+                    fontsize=10, verticalalignment='top',
+                    fontfamily='monospace',
+                    bbox=dict(boxstyle='round', facecolor='#F8F9FA', 
+                            edgecolor='#CED4DA', linewidth=2, pad=15))
+            
+            # ============================================
+            # Overall title
+            # ============================================
+            fig.suptitle(f'Intrinsic Dimensionality Analysis | {level.upper()} K{kmer} ({method.upper()})',
+                        fontsize=15, fontweight='bold', y=0.98)
+            
+            plt.tight_layout(rect=[0, 0, 1, 0.97])
+            
+            # Save with high DPI
+            filepath = self.output_dir / f'analysis_intrinsic_dimensionality_{level}_k{kmer}_{method}.png'
+            plt.savefig(filepath, dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+            plt.close()
+            
+            print(f"      ✅ Intrinsic dim plot (Nature style): {filepath.name}")
+            
+        except Exception as e:
+            print(f"      ❌ Intrinsic dim plot failed: {e}")
+            import traceback
+            traceback.print_exc()
+            plt.close('all')
+    
+    def plot_time_execution(self, level: str, kmer: int, method: str):
+        """📊 Plot time execution vs n_components"""
+        try:
+            n_comps = self.metrics_history['n_components']
+            time_vals = self.metrics_history['time']
+            
+            if not time_vals:
+                print("      ⚠️  No time data to plot")
+                return
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(n_comps, time_vals, marker='D', linewidth=2.5, markersize=8, 
+                   color='#F18F01', label='Execution Time')
+            
+            ax.set_xlabel('Number of Components', fontsize=13, fontweight='bold')
+            ax.set_ylabel('Time (seconds)', fontsize=13, fontweight='bold')
+            ax.set_title(f'Reduction Time Execution vs Components\n{level.upper()} | k={kmer} | {method.upper()}', 
+                        fontsize=14, fontweight='bold', pad=15)
+            ax.grid(True, alpha=0.3, linestyle='--')
+            ax.legend(fontsize=11)
+            
+            plt.tight_layout()
+            filepath = self.output_dir / f'analysis_time_execution_{level}_k{kmer}_{method}.png'
+            plt.savefig(filepath, dpi=300, bbox_inches='tight', facecolor='white')
+            plt.close()
+            
+            print(f"      ✅ Time execution plot: {filepath.name}")
+            
+        except Exception as e:
+            print(f"      ❌ Time plot failed: {e}")
+            plt.close('all')
+    
+    def plot_memory_usage(self, level: str, kmer: int, method: str):
+        """📊 Plot peak memory usage vs n_components"""
+        try:
+            n_comps = self.metrics_history['n_components']
+            memory_vals = [m / (1024**2) for m in self.metrics_history['memory']]  # Convert to MB
+            
+            if not memory_vals:
+                print("      ⚠️  No memory data to plot")
+                return
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(n_comps, memory_vals, marker='v', linewidth=2.5, markersize=8, 
+                   color='#C73E1D', label='Peak Memory')
+            
+            ax.set_xlabel('Number of Components', fontsize=13, fontweight='bold')
+            ax.set_ylabel('Peak Memory Usage (MB)', fontsize=13, fontweight='bold')
+            ax.set_title(f'Peak Memory Usage vs Components\n{level.upper()} | k={kmer} | {method.upper()}', 
+                        fontsize=14, fontweight='bold', pad=15)
+            ax.grid(True, alpha=0.3, linestyle='--')
+            ax.legend(fontsize=11)
+            
+            plt.tight_layout()
+            filepath = self.output_dir / f'analysis_memory_usage_{level}_k{kmer}_{method}.png'
+            plt.savefig(filepath, dpi=300, bbox_inches='tight', facecolor='white')
+            plt.close()
+            
+            print(f"      ✅ Memory usage plot: {filepath.name}")
+            
+        except Exception as e:
+            print(f"      ❌ Memory plot failed: {e}")
+            plt.close('all')
+    
+    def generate_all_plots(self, level: str, kmer: int, method: str):
+        """📊 Generate all comprehensive analysis plots"""
+        print(f"\n   📊 Generating comprehensive analysis plots...")
+        
+        self.plot_reconstruction_error(level, kmer, method)
+        self.plot_distance_correlation(level, kmer, method)
+        self.plot_intrinsic_dimensionality(level, kmer, method)
+        self.plot_time_execution(level, kmer, method)
+        self.plot_memory_usage(level, kmer, method)
+        
+        # Save metrics to CSV
+        try:
+            metrics_df = pd.DataFrame(self.metrics_history)
+            metrics_file = self.output_dir / f'analysis_metrics_{level}_k{kmer}_{method}.csv'
+            metrics_df.to_csv(metrics_file, index=False)
+            print(f"      ✅ Metrics CSV: {metrics_file.name}")
+        except Exception as e:
+            print(f"      ❌ Failed to save metrics CSV: {e}")
+                
 # =================================================================
 # 3. PLOTTING MANAGER WITH MEMORY SAFETY - ENHANCED
 # =================================================================
@@ -1193,11 +1629,171 @@ class SimplifiedBenchmark:
                     f"{self.config.emergency_stop_threshold}%"
                 )
     
-    def find_optimal_components(self, X, y, method):
-        """Find optimal components dengan ITERATIVE SEARCH (TRAIN ONLY)"""
+    # def find_optimal_components(self, X, y, method, level, kmer):
+    #     """
+    #     Find optimal components dengan comprehensive metrics tracking
+        
+    #     🆕 TAMBAHAN: Track MSE, distance correlation, intrinsic dimensionality
+    #     """
+    #     MemoryManager.log_memory("Before component optimization")
+        
+    #     # Initialize analyzer
+    #     output_dir = self.output_mgr.get_output_dir(level, kmer, method)
+    #     analyzer = DimensionalityAnalyzer(output_dir)
+        
+    #     # Auto-calculate batch size
+    #     if self.config.batch_size is None:
+    #         batch_size = MemoryManager.safe_batch_size(X, self.config.max_memory_gb)
+    #         print(f"🔧 Auto batch size: {batch_size}")
+    #     else:
+    #         batch_size = self.config.batch_size
+        
+    #     if method == 'ipca':
+    #         print(f"🔍 Searching optimal components (threshold={self.config.cev_threshold})...")
+            
+    #         current_n = self.config.start_components
+    #         optimal_n = current_n
+    #         best_cev = 0.0
+            
+    #         while current_n <= self.config.max_components:
+    #             print(f"\n{'─'*70}")
+    #             print(f"   Testing n_components = {current_n}")
+    #             print(f"{'─'*70}")
+                
+    #             # Start tracking time & memory
+    #             tracemalloc.start()
+    #             start_time = time.time()
+                
+    #             try:
+    #                 # Fit model
+    #                 model = IncrementalPCA(n_components=current_n)
+                    
+    #                 n_batches = int(np.ceil(X.shape[0] / batch_size))
+    #                 pbar = tqdm(total=n_batches, desc=f"   Fitting {current_n} components", leave=False)
+                    
+    #                 for i in range(0, X.shape[0], batch_size):
+    #                     self._check_memory_emergency()
+    #                     batch = X[i:i+batch_size].toarray()
+    #                     model.partial_fit(batch)
+    #                     del batch
+    #                     MemoryManager.force_gc()
+    #                     pbar.update(1)
+    #                 pbar.close()
+                    
+    #                 # Transform untuk metrics
+    #                 print(f"   Transforming data for metrics...")
+    #                 X_transformed_list = []
+    #                 for i in range(0, X.shape[0], batch_size):
+    #                     batch = X[i:i+batch_size].toarray()
+    #                     X_transformed_list.append(model.transform(batch))
+    #                     del batch
+    #                     MemoryManager.force_gc()
+                    
+    #                 X_transformed = np.vstack(X_transformed_list)
+    #                 del X_transformed_list
+                    
+    #                 # Get original data sample untuk MSE & correlation
+    #                 sample_size = min(5000, X.shape[0])
+    #                 indices = np.random.choice(X.shape[0], sample_size, replace=False)
+    #                 X_original_sample = X[indices].toarray()
+                    
+    #                 # End tracking
+    #                 elapsed_time = time.time() - start_time
+    #                 current_mem, peak_mem = tracemalloc.get_traced_memory()
+    #                 tracemalloc.stop()
+                    
+    #                 # Calculate CEV
+    #                 variance_ratio = model.explained_variance_ratio_
+    #                 cev = np.cumsum(variance_ratio)
+    #                 best_cev = cev[-1]
+                    
+    #                 print(f"\n   ✅ CEV: {best_cev:.4f} ({best_cev*100:.2f}%)")
+                    
+    #                 # 🆕 RECORD COMPREHENSIVE METRICS
+    #                 analyzer.record_metrics(
+    #                     n_components=current_n,
+    #                     X_original=X_original_sample,
+    #                     X_reduced=X_transformed[indices],
+    #                     model=model,
+    #                     elapsed_time=elapsed_time,
+    #                     peak_memory=peak_mem
+    #                 )
+                    
+    #                 # Clean up
+    #                 del X_transformed, X_original_sample
+    #                 MemoryManager.force_gc()
+                    
+    #                 # Check threshold
+    #                 if best_cev >= self.config.cev_threshold:
+    #                     optimal_n = np.argmax(cev >= self.config.cev_threshold) + 1
+    #                     print(f"\n   ✅ Threshold reached at component {optimal_n}")
+    #                     print(f"      Final CEV: {cev[optimal_n-1]:.4f}")
+    #                     break
+                    
+    #                 current_n += self.config.step_components
+                    
+    #                 if current_n > self.config.max_components:
+    #                     optimal_n = self.config.max_components
+    #                     print(f"\n   ⚠️  Reached max_components ({self.config.max_components})")
+    #                     print(f"      Best CEV: {best_cev:.4f} (target: {self.config.cev_threshold})")
+    #                     break
+                        
+    #             except Exception as e:
+    #                 print(f"\n   ❌ Error at n={current_n}: {e}")
+    #                 tracemalloc.stop()
+    #                 continue
+            
+    #         # Final fit dengan optimal_n
+    #         print(f"\n🔧 Final fit with {optimal_n} components...")
+    #         model = IncrementalPCA(n_components=optimal_n)
+            
+    #         n_batches = int(np.ceil(X.shape[0] / batch_size))
+    #         pbar = tqdm(total=n_batches, desc="Final fitting")
+            
+    #         for i in range(0, X.shape[0], batch_size):
+    #             batch = X[i:i+batch_size].toarray()
+    #             model.partial_fit(batch)
+    #             del batch
+    #             MemoryManager.force_gc()
+    #             pbar.update(1)
+    #         pbar.close()
+            
+    #         variance_ratio = model.explained_variance_ratio_
+    #         final_cev = np.cumsum(variance_ratio)[optimal_n-1]
+            
+    #         # 🆕 GENERATE COMPREHENSIVE PLOTS
+    #         analyzer.generate_all_plots(level, kmer, method)
+            
+    #     elif method == 'svd':
+    #         # Similar implementation for SVD
+    #         print("⚠️  SVD comprehensive metrics not yet implemented")
+    #         model = TruncatedSVD(n_components=self.config.start_components)
+    #         model.fit(X)
+    #         optimal_n = self.config.start_components
+    #         variance_ratio = model.explained_variance_ratio_
+    #         final_cev = np.sum(variance_ratio)
+        
+    #     else:
+    #         return self.config.start_components, None, 0.0, None
+        
+    #     MemoryManager.log_memory("After component optimization")
+    #     MemoryManager.force_gc()
+        
+    #     return optimal_n, variance_ratio, final_cev, model
+
+    def find_optimal_components(self, X, y, method, level, kmer):
+        """
+        Find optimal components dengan comprehensive metrics tracking
+        
+        🆕 FIX: Rekam metrics untuk FINAL optimal components
+        """
         MemoryManager.log_memory("Before component optimization")
         
-        # Auto-calculate batch size if not provided
+        # Initialize analyzer
+        output_dir = self.output_mgr.get_output_dir(level, kmer, method)
+        analyzer = DimensionalityAnalyzer(output_dir)
+        
+        # Auto-calculate batch size
         if self.config.batch_size is None:
             batch_size = MemoryManager.safe_batch_size(X, self.config.max_memory_gb)
             print(f"🔧 Auto batch size: {batch_size}")
@@ -1207,64 +1803,118 @@ class SimplifiedBenchmark:
         if method == 'ipca':
             print(f"🔍 Searching optimal components (threshold={self.config.cev_threshold})...")
             
-            # 👇 ITERATIVE SEARCH: Start → Max dengan step
             current_n = self.config.start_components
             optimal_n = current_n
             best_cev = 0.0
             
+            # =====================================================
+            # PHASE 1: SEARCH OPTIMAL COMPONENTS
+            # =====================================================
             while current_n <= self.config.max_components:
-                print(f"\n   Testing n_components = {current_n}...")
+                print(f"\n{'─'*70}")
+                print(f"   Testing n_components = {current_n}")
+                print(f"{'─'*70}")
                 
-                # Fit model dengan current_n komponen
-                model = IncrementalPCA(n_components=current_n)
+                # Start tracking time & memory
+                tracemalloc.start()
+                start_time = time.time()
                 
-                # Incremental fitting
-                n_batches = int(np.ceil(X.shape[0] / batch_size))
-                pbar = tqdm(total=n_batches, desc=f"Fitting {current_n} components", leave=False)
-                
-                for i in range(0, X.shape[0], batch_size):
-                    self._check_memory_emergency()
-                    batch = X[i:i+batch_size].toarray()
-                    model.partial_fit(batch)
-                    del batch
+                try:
+                    # Fit model
+                    model = IncrementalPCA(n_components=current_n)
+                    
+                    n_batches = int(np.ceil(X.shape[0] / batch_size))
+                    pbar = tqdm(total=n_batches, desc=f"   Fitting {current_n} components", leave=False)
+                    
+                    for i in range(0, X.shape[0], batch_size):
+                        self._check_memory_emergency()
+                        batch = X[i:i+batch_size].toarray()
+                        model.partial_fit(batch)
+                        del batch
+                        MemoryManager.force_gc()
+                        pbar.update(1)
+                    pbar.close()
+                    
+                    # Transform untuk metrics
+                    print(f"   Transforming data for metrics...")
+                    X_transformed_list = []
+                    for i in range(0, X.shape[0], batch_size):
+                        batch = X[i:i+batch_size].toarray()
+                        X_transformed_list.append(model.transform(batch))
+                        del batch
+                        MemoryManager.force_gc()
+                    
+                    X_transformed = np.vstack(X_transformed_list)
+                    del X_transformed_list
+                    
+                    # Get original data sample untuk MSE & correlation
+                    sample_size = min(5000, X.shape[0])
+                    indices = np.random.choice(X.shape[0], sample_size, replace=False)
+                    X_original_sample = X[indices].toarray()
+                    
+                    # End tracking
+                    elapsed_time = time.time() - start_time
+                    current_mem, peak_mem = tracemalloc.get_traced_memory()
+                    tracemalloc.stop()
+                    
+                    # Calculate CEV
+                    variance_ratio = model.explained_variance_ratio_
+                    cev = np.cumsum(variance_ratio)
+                    best_cev = cev[-1]
+                    
+                    print(f"\n   ✅ CEV: {best_cev:.4f} ({best_cev*100:.2f}%)")
+                    
+                    # 🆕 RECORD COMPREHENSIVE METRICS
+                    analyzer.record_metrics(
+                        n_components=current_n,
+                        X_original=X_original_sample,
+                        X_reduced=X_transformed[indices],
+                        model=model,
+                        elapsed_time=elapsed_time,
+                        peak_memory=peak_mem
+                    )
+                    
+                    # Clean up
+                    del X_transformed, X_original_sample
                     MemoryManager.force_gc()
-                    pbar.update(1)
-                pbar.close()
-                
-                # Calculate CEV
-                variance_ratio = model.explained_variance_ratio_
-                cev = np.cumsum(variance_ratio)
-                best_cev = cev[-1]  # Last value = total CEV
-                
-                print(f"      CEV achieved: {best_cev:.4f}")
-                
-                # 👇 CHECK IF THRESHOLD REACHED
-                if best_cev >= self.config.cev_threshold:
-                    # Find exact component where threshold was reached
-                    optimal_n = np.argmax(cev >= self.config.cev_threshold) + 1
-                    print(f"   ✅ Threshold reached at component {optimal_n}")
-                    print(f"      Final CEV: {cev[optimal_n-1]:.4f}")
-                    break
-                
-                # 👇 INCREASE n_components by step
-                current_n += self.config.step_components
-                
-                # If reached max without hitting threshold
-                if current_n > self.config.max_components:
-                    optimal_n = self.config.max_components
-                    print(f"   ⚠️  Reached max_components ({self.config.max_components})")
-                    print(f"      Best CEV achieved: {best_cev:.4f} (target: {self.config.cev_threshold})")
-                    break
+                    
+                    # Check threshold
+                    if best_cev >= self.config.cev_threshold:
+                        optimal_n = np.argmax(cev >= self.config.cev_threshold) + 1
+                        print(f"\n   ✅ Threshold reached at component {optimal_n}")
+                        print(f"      Final CEV: {cev[optimal_n-1]:.4f}")
+                        break
+                    
+                    current_n += self.config.step_components
+                    
+                    if current_n > self.config.max_components:
+                        optimal_n = self.config.max_components
+                        print(f"\n   ⚠️  Reached max_components ({self.config.max_components})")
+                        print(f"      Best CEV: {best_cev:.4f} (target: {self.config.cev_threshold})")
+                        break
+                        
+                except Exception as e:
+                    print(f"\n   ❌ Error at n={current_n}: {e}")
+                    tracemalloc.stop()
+                    continue
             
-            # Re-fit dengan optimal_n untuk mendapatkan variance_ratio yang sesuai
-            print(f"\n🔧 Final fit with {optimal_n} components...")
+            # =====================================================
+            # PHASE 2: FINAL FIT WITH OPTIMAL COMPONENTS + METRICS
+            # =====================================================
+            print(f"\n{'='*70}")
+            print(f"🔧 FINAL FIT with {optimal_n} components + COMPREHENSIVE METRICS")
+            print(f"{'='*70}")
+            
+            # ✅ START TRACKING untuk final fit
+            tracemalloc.start()
+            start_time_final = time.time()
+            
             model = IncrementalPCA(n_components=optimal_n)
             
             n_batches = int(np.ceil(X.shape[0] / batch_size))
             pbar = tqdm(total=n_batches, desc="Final fitting")
             
             for i in range(0, X.shape[0], batch_size):
-                self._check_memory_emergency()
                 batch = X[i:i+batch_size].toarray()
                 model.partial_fit(batch)
                 del batch
@@ -1272,50 +1922,60 @@ class SimplifiedBenchmark:
                 pbar.update(1)
             pbar.close()
             
+            # ✅ TRANSFORM untuk final metrics
+            print(f"   🔄 Transforming for final metrics...")
+            X_transformed_list = []
+            for i in range(0, X.shape[0], batch_size):
+                batch = X[i:i+batch_size].toarray()
+                X_transformed_list.append(model.transform(batch))
+                del batch
+                MemoryManager.force_gc()
+            
+            X_transformed_final = np.vstack(X_transformed_list)
+            del X_transformed_list
+            
+            # ✅ GET SAMPLE untuk metrics
+            sample_size = min(5000, X.shape[0])
+            indices = np.random.choice(X.shape[0], sample_size, replace=False)
+            X_original_sample_final = X[indices].toarray()
+            
+            # ✅ END TRACKING
+            elapsed_time_final = time.time() - start_time_final
+            current_mem_final, peak_mem_final = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            
             variance_ratio = model.explained_variance_ratio_
-            final_cev = np.cumsum(variance_ratio)[optimal_n-1]  # 👈 CEV at optimal_n
+            final_cev = np.cumsum(variance_ratio)[optimal_n-1]
+            
+            # ✅ RECORD FINAL METRICS (PENTING!)
+            print(f"\n   📊 Recording final metrics for n={optimal_n}...")
+            analyzer.record_metrics(
+                n_components=optimal_n,
+                X_original=X_original_sample_final,
+                X_reduced=X_transformed_final[indices],
+                model=model,
+                elapsed_time=elapsed_time_final,
+                peak_memory=peak_mem_final
+            )
+            
+            # Clean up
+            del X_transformed_final, X_original_sample_final
+            MemoryManager.force_gc()
+            
+            # 🆕 GENERATE COMPREHENSIVE PLOTS (sekarang ada data!)
+            print(f"\n{'='*70}")
+            print(f"📊 GENERATING COMPREHENSIVE ANALYSIS PLOTS")
+            print(f"{'='*70}")
+            analyzer.generate_all_plots(level, kmer, method)
             
         elif method == 'svd':
-            # SVD logic
-            print("⚠️  SVD uses full matrix, checking memory...")
-            dense_size = MemoryManager.estimate_dense_memory(X)
-            
-            if dense_size > self.config.max_memory_gb * 2:
-                print(f"⚠️  WARNING: Data might be too large for SVD")
-            
-            # Start dengan start_components
-            current_n = self.config.start_components
-            optimal_n = current_n
-            
-            while current_n <= self.config.max_components:
-                print(f"\n   Testing n_components = {current_n}...")
-                
-                model = TruncatedSVD(n_components=current_n)
-                model.fit(X)
-                
-                variance_ratio = model.explained_variance_ratio_
-                cev = np.cumsum(variance_ratio)
-                best_cev = cev[-1]
-                
-                print(f"      CEV achieved: {best_cev:.4f}")
-                
-                if best_cev >= self.config.cev_threshold:
-                    optimal_n = np.argmax(cev >= self.config.cev_threshold) + 1
-                    print(f"   ✅ Threshold reached at component {optimal_n}")
-                    break
-                
-                current_n += self.config.step_components
-                
-                if current_n > self.config.max_components:
-                    optimal_n = self.config.max_components
-                    print(f"   ⚠️  Reached max_components")
-                    break
-            
-            # Re-fit dengan optimal_n
-            model = TruncatedSVD(n_components=optimal_n)
+            # ✅ TODO: Implement similar for SVD
+            print("⚠️  SVD comprehensive metrics not yet implemented")
+            model = TruncatedSVD(n_components=self.config.start_components)
             model.fit(X)
+            optimal_n = self.config.start_components
             variance_ratio = model.explained_variance_ratio_
-            final_cev = np.cumsum(variance_ratio)[optimal_n-1]  # 👈 CEV at optimal_n
+            final_cev = np.sum(variance_ratio)
         
         else:
             return self.config.start_components, None, 0.0, None
@@ -1323,7 +1983,6 @@ class SimplifiedBenchmark:
         MemoryManager.log_memory("After component optimization")
         MemoryManager.force_gc()
         
-        # 👇 RETURN MODEL untuk digunakan transform test data
         return optimal_n, variance_ratio, final_cev, model
     
     def _transform_with_model(self, X, model, method):
@@ -1455,7 +2114,11 @@ class SimplifiedBenchmark:
                             # =================================================
                             print(f"\n📊 Step 1: Finding optimal components on {'SAMPLED ' if train_sampling_info else ''}TRAIN data...")
                             n_comp, variance_ratio, train_cev, fitted_model = self.find_optimal_components(
-                                X_train, y_train, method
+                                X_train,      # 1. X data
+                                y_train,      # 2. y labels
+                                method,       # 3. method name
+                                level,        # 4. taxonomic level
+                                kmer          # 5. k-mer size
                             )
                             print(f"   ✅ Optimal components: {n_comp}")
                             print(f"   📈 Train CEV Score: {train_cev:.4f}")
@@ -1683,7 +2346,7 @@ def run_benchmark(
     enable_sampling: bool = False,
     sampling_kmer_threshold: int = 8,
     sampling_percentage: float = 0.1,
-    min_samples_per_class = 2,  # ✅ Can be int or 'disable'
+    min_samples_per_class: int = 2,
     max_samples_per_class: int = None,
     
     **kwargs
@@ -1705,8 +2368,6 @@ def run_benchmark(
         sampling_kmer_threshold: Apply sampling for k-mer >= threshold
         sampling_percentage: Target percentage per class (0.0-1.0)
         min_samples_per_class: Minimum samples to keep class
-            - int (e.g., 2): Skip classes with < this number
-            - 'disable': Keep ALL classes (no minimum)
         max_samples_per_class: Maximum samples per class (optional)
         
     Returns:
@@ -1720,28 +2381,17 @@ def run_benchmark(
             methods=['ipca']
         )
     
-    Example 2: With sampling (skip small classes)
+    Example 2: With sampling for large k-mer
         results = run_benchmark(
             data_path='/path/to/data',
             levels=['genus'],
-            kmers=[8],
+            kmers=[6, 8, 10],
             methods=['ipca'],
             enable_sampling=True,
-            sampling_kmer_threshold=8,
-            sampling_percentage=0.1,
-            min_samples_per_class=2  # Skip classes with <2 samples
-        )
-    
-    Example 3: With sampling (keep ALL classes) ✅ NEW!
-        results = run_benchmark(
-            data_path='/path/to/data',
-            levels=['genus'],
-            kmers=[8],
-            methods=['ipca'],
-            enable_sampling=True,
-            sampling_kmer_threshold=8,
-            sampling_percentage=0.1,
-            min_samples_per_class='disable'  # ✅ Keep ALL classes!
+            sampling_kmer_threshold=8,  # Sample k>=8 only
+            sampling_percentage=0.1,     # 10% per class
+            min_samples_per_class=2,     # Skip classes with <2 samples
+            max_samples_per_class=1000   # Max 1000 per class
         )
     """
 
@@ -1757,7 +2407,7 @@ def run_benchmark(
         enable_sampling=enable_sampling,
         sampling_kmer_threshold=sampling_kmer_threshold,
         sampling_percentage=sampling_percentage,
-        min_samples_per_class=min_samples_per_class,  # ✅ Can be int or 'disable'
+        min_samples_per_class=min_samples_per_class,
         max_samples_per_class=max_samples_per_class,
         **kwargs
     )
@@ -1820,35 +2470,7 @@ if __name__ == "__main__":
         max_samples_per_class=5000    # Max 5000 per class
     )
     """)
-
-    # Example 4: Keep all class sampling
-    print("\n📝 Example 3: Conservative sampling (20% per class)")
-    print("""
-    results = run_benchmark(
-        data_path='/Users/tirtasetiawan/Documents/rki_v1/rki_2025/prep/vectorization',
-        levels=['genus'],
-        kmers=[6, 8],
-        methods=['ipca'],
-        enable_sampling=True,
-        sampling_kmer_threshold=8,
-        sampling_percentage=0.2,      # 20% per class
-        min_samples_per_class=disable,      # keep all classes
-        max_samples_per_class=5000    # Max 5000 per class
-    )
-    """)
-
-    # Example 4: No sampling
-    print("\n📝 Example 3: Conservative sampling (20% per class)")
-    print("""
-    results = run_benchmark(
-        data_path='/path/to/data',
-        levels=['genus'],
-        kmers=[8],
-        methods=['ipca'],
-        enable_sampling=False  # ✅ No sampling
-    )
-    """)
-
+    
     print("\n✅ Key sampling features:")
     print("   ✓ Stratified sampling per class")
     print("   ✓ Configurable percentage (default 10%)")
