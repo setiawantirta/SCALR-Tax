@@ -146,10 +146,126 @@ def plot_freq(df, folder_path=None, level='genus'):
 
     return file_path
 
-def level_extract_plot_freq(df_tax, path_=None, level='genus', filter_uncultured=True, min_sample_freq=4):
-    """Process and plot frequency for specific taxonomic level"""
+# def level_extract_plot_freq(df_tax, path_=None, level='genus', filter_uncultured=True, min_sample_freq=1):
+#     """
+#     Extract taxonomic level data and plot frequency distribution
+    
+#     Parameters:
+#     -----------
+#     df_tax : DataFrame
+#         Taxonomic data
+#     path_ : str
+#         Output path for plots
+#     level : str
+#         Taxonomic level (genus, species, etc)
+#     filter_uncultured : bool
+#         Remove 'uncultured' labels
+#     min_sample_freq : int
+#         🆕 CHANGED: Default was 4, now 1 (keep all classes)
+#         Minimum frequency to keep a class
+#         - Set to 1: Keep ALL classes (recommended for hierarchical grouping)
+#         - Set to 4: Old behavior (aggressive filtering)
+    
+#     Returns:
+#     --------
+#     df_result : DataFrame
+#         Filtered data
+#     csv_path : str
+#         Path to saved CSV
+#     """
 
-    print(f"= STEP 1: Load Data {level} =")
+#     print(f"= STEP 1: Load Data {level} =")
+#     kolom_used = ['sequence', level]
+
+#     # Initialize df_filter
+#     df_filter = None
+
+#     if filter_uncultured:
+#         if level == 'genus':
+#             delete_pattern = 'g__uncultured'
+#             df_filter = df_tax[
+#                 (df_tax['genus'] != 'Unclassified') &
+#                 (~df_tax['genus'].str.contains(delete_pattern, case=False, na=False))
+#             ]
+
+#         elif level == 'species':
+#             delete_patterns = ['s__uncultured', 's__metagenome']
+#             df_filter = df_tax[
+#                 (df_tax['species'] != 'Unclassified') &
+#                 (~df_tax['species'].str.contains('|'.join(delete_patterns), case=False, na=False))
+#             ]
+
+#         else:
+#             df_filter = df_tax[df_tax[level] != 'Unclassified']
+#     else:
+#         df_filter = df_tax.copy()
+
+#     df_filter = df_filter[kolom_used].copy()
+
+#     # Summary statistics
+#     print(f'SUMMARY {level}')
+#     df_rename = df_filter.rename(columns={level: "label"})
+#     df_rename.dropna(inplace=True)
+
+#     print(f"== Hitung frekuensi kelas & drop label < {min_sample_freq}")
+#     class_counts = df_rename['label'].value_counts()
+#     valid_labels = class_counts[class_counts >= min_sample_freq].index
+#     df_final = df_rename[df_rename['label'].isin(valid_labels)].copy()
+#     df_final = df_final.reset_index(drop=True)
+
+#     # Create folder and save CSV
+#     csv_level_file_path = None
+#     folder_path = None
+
+#     if path_:
+#         folder_path = os.path.join(path_, level)
+#         os.makedirs(folder_path, exist_ok=True)
+
+#         csv_level_file_path = os.path.join(folder_path, f'{level}.csv')
+#         df_final.to_csv(csv_level_file_path, index=False)
+#         print(f"CSV saved to: {csv_level_file_path}")
+
+#     plot_freq(df_final, folder_path=folder_path, level='label')
+
+#     print(f"=== Jumlah label sebelum filter: {df_rename['label'].nunique()}")
+#     print(f"=== Jumlah label setelah filter: {df_final['label'].nunique()}")
+#     print(f"=== Jumlah baris data: {len(df_final)}")
+#     print('========================================================')
+
+#     return df_final, csv_level_file_path
+
+def level_extract_plot_freq(df_tax, path_=None, level='genus', filter_uncultured=True, min_sample_freq=1):
+    """
+    Extract taxonomic level data and plot frequency distribution
+    
+    Parameters:
+    -----------
+    df_tax : DataFrame
+        Taxonomic data
+    path_ : str
+        Output path for plots
+    level : str
+        Taxonomic level (genus, species, etc)
+    filter_uncultured : bool
+        Remove 'uncultured' labels
+    min_sample_freq : int
+        🆕 CHANGED: Default was 4, now 1 (keep all classes)
+        Minimum frequency to keep a class
+        - Set to 1: Keep ALL classes (recommended for hierarchical grouping)
+        - Set to 4: Old behavior (aggressive filtering)
+    
+    Returns:
+    --------
+    df_result : DataFrame
+        Filtered data
+    csv_path : str
+        Path to saved CSV
+    """
+
+    print(f"\n{'='*70}")
+    print(f"📊 STEP 1: LOAD DATA - {level.upper()}")
+    print(f"{'='*70}")
+    
     kolom_used = ['sequence', level]
 
     # Initialize df_filter
@@ -178,17 +294,95 @@ def level_extract_plot_freq(df_tax, path_=None, level='genus', filter_uncultured
     df_filter = df_filter[kolom_used].copy()
 
     # Summary statistics
-    print(f'SUMMARY {level}')
+    print(f'\n📋 INITIAL DATA SUMMARY:')
     df_rename = df_filter.rename(columns={level: "label"})
     df_rename.dropna(inplace=True)
+    
+    print(f"   • Total samples: {len(df_rename):,}")
+    print(f"   • Total classes: {df_rename['label'].nunique()}")
 
-    print(f"== Hitung frekuensi kelas & drop label < {min_sample_freq}")
+    # ============================================================
+    # 🆕 IMPROVED: Detailed Class Distribution Analysis
+    # ============================================================
+    
+    print(f"\n📈 CLASS SIZE DISTRIBUTION (BEFORE FILTERING):")
     class_counts = df_rename['label'].value_counts()
-    valid_labels = class_counts[class_counts >= min_sample_freq].index
-    df_final = df_rename[df_rename['label'].isin(valid_labels)].copy()
-    df_final = df_final.reset_index(drop=True)
+    
+    # Calculate distribution statistics
+    size_1 = (class_counts == 1).sum()
+    size_2_3 = ((class_counts >= 2) & (class_counts <= 3)).sum()
+    size_4_9 = ((class_counts >= 4) & (class_counts <= 9)).sum()
+    size_10_plus = (class_counts >= 10).sum()
+    
+    print(f"   • Classes with 1 sample: {size_1}")
+    print(f"   • Classes with 2-3 samples: {size_2_3}")
+    print(f"   • Classes with 4-9 samples: {size_4_9}")
+    print(f"   • Classes with ≥10 samples: {size_10_plus}")
+    
+    # ============================================================
+    # 🆕 IMPROVED: Configurable Filtering with Detailed Reporting
+    # ============================================================
+    
+    if min_sample_freq > 1:
+        print(f"\n⚠️  FILTERING: Dropping classes with < {min_sample_freq} samples")
+        
+        classes_to_drop = class_counts[class_counts < min_sample_freq].index
+        samples_to_drop = class_counts[classes_to_drop].sum()
+        
+        print(f"   • Classes to drop: {len(classes_to_drop)}")
+        print(f"   • Samples to drop: {samples_to_drop:,}")
+        
+        # Show examples of dropped classes
+        if len(classes_to_drop) > 0:
+            print(f"\n   📋 Examples of dropped classes:")
+            dropped_sorted = class_counts[classes_to_drop].sort_values(ascending=False)
+            
+            for idx, (cls, cnt) in enumerate(dropped_sorted.head(10).items(), 1):
+                cls_str = str(cls)[:55] + "..." if len(str(cls)) > 58 else str(cls)
+                print(f"      {idx:2d}. {cls_str}: {cnt} samples")
+            
+            if len(classes_to_drop) > 10:
+                print(f"      ... and {len(classes_to_drop)-10} more classes")
+        
+        # Apply filter
+        valid_labels = class_counts[class_counts >= min_sample_freq].index
+        df_final = df_rename[df_rename['label'].isin(valid_labels)].copy()
+        df_final = df_final.reset_index(drop=True)
+        
+        print(f"\n✅ AFTER FILTERING:")
+        print(f"   • Remaining samples: {len(df_final):,}")
+        print(f"   • Remaining classes: {df_final['label'].nunique()}")
+        print(f"   • Sample reduction: {samples_to_drop:,} ({(samples_to_drop/len(df_rename))*100:.2f}%)")
+        print(f"   • Class reduction: {len(classes_to_drop)} ({(len(classes_to_drop)/len(class_counts))*100:.2f}%)")
+    
+    else:
+        print(f"\n✅ NO FILTERING APPLIED (min_sample_freq={min_sample_freq})")
+        print(f"   • Keeping ALL {len(class_counts)} classes")
+        print(f"   • Total samples: {len(df_rename):,}")
+        df_final = df_rename.copy()
 
-    # Create folder and save CSV
+    # ============================================================
+    # 🆕 IMPROVED: Final Statistics Summary
+    # ============================================================
+    
+    final_class_counts = df_final['label'].value_counts()
+    
+    print(f"\n📊 FINAL DATA STATISTICS:")
+    print(f"   • Total samples: {len(df_final):,}")
+    print(f"   • Total classes: {df_final['label'].nunique()}")
+    print(f"   • Min class size: {final_class_counts.min()}")
+    print(f"   • Max class size: {final_class_counts.max()}")
+    print(f"   • Mean class size: {final_class_counts.mean():.1f}")
+    print(f"   • Median class size: {final_class_counts.median():.1f}")
+    
+    if final_class_counts.min() > 0:
+        imbalance_ratio = final_class_counts.max() / final_class_counts.min()
+        print(f"   • Imbalance ratio: {imbalance_ratio:.1f}:1")
+
+    # ============================================================
+    # Save CSV and Generate Plots
+    # ============================================================
+    
     csv_level_file_path = None
     folder_path = None
 
@@ -198,14 +392,17 @@ def level_extract_plot_freq(df_tax, path_=None, level='genus', filter_uncultured
 
         csv_level_file_path = os.path.join(folder_path, f'{level}.csv')
         df_final.to_csv(csv_level_file_path, index=False)
-        print(f"CSV saved to: {csv_level_file_path}")
+        print(f"\n💾 CSV saved to: {csv_level_file_path}")
 
-    plot_freq(df_final, folder_path=folder_path, level='label')
+    # Generate frequency plots
+    try:
+        plot_freq(df_final, folder_path=folder_path, level='label')
+        if folder_path:
+            print(f"📊 Frequency plots saved to: {folder_path}")
+    except Exception as e:
+        print(f"⚠️  Warning: Could not generate plots: {e}")
 
-    print(f"=== Jumlah label sebelum filter: {df_rename['label'].nunique()}")
-    print(f"=== Jumlah label setelah filter: {df_final['label'].nunique()}")
-    print(f"=== Jumlah baris data: {len(df_final)}")
-    print('========================================================')
+    print(f"{'='*70}\n")
 
     return df_final, csv_level_file_path
 
@@ -541,10 +738,738 @@ def centroid_based_sampling(
     
     return df_sampled
 
+# ============================================================
+# 🆕 STRATEGY 1: HIERARCHICAL RARE GROUPING
+# ============================================================
+
+def hierarchical_rare_grouping(
+    df, 
+    label_column='label',
+    min_samples=10,
+    group_by_taxonomy=True,
+    taxonomy_delimiter='_',
+    verbose=True
+):
+    """
+    Group rare classes hierarchically by taxonomic levels
+    
+    Preserves biological meaning by grouping rare species by their genus
+    
+    Parameters:
+    -----------
+    df : DataFrame
+        Data with sequence and label columns
+    label_column : str
+        Column name containing taxonomic labels
+    min_samples : int
+        Classes with < min_samples are considered "rare"
+    group_by_taxonomy : bool
+        If True, group by genus level. If False, group into single 'RARE_CLASS'
+    taxonomy_delimiter : str
+        Delimiter to split taxonomic labels (e.g., '_' for 'Genus_species')
+    verbose : bool
+        Print detailed statistics
+    
+    Returns:
+    --------
+    df_grouped : DataFrame
+        Data with rare classes grouped
+    
+    Examples:
+    ---------
+    >>> # Group rare species by genus
+    >>> df_grouped = hierarchical_rare_grouping(
+    ...     df, 
+    ...     min_samples=10,
+    ...     group_by_taxonomy=True
+    ... )
+    
+    >>> # Simple grouping into 'RARE_CLASS'
+    >>> df_grouped = hierarchical_rare_grouping(
+    ...     df, 
+    ...     min_samples=10,
+    ...     group_by_taxonomy=False
+    ... )
+    """
+    
+    if verbose:
+        print(f"\n{'='*70}")
+        print(f"🌳 HIERARCHICAL RARE GROUPING")
+        print(f"{'='*70}")
+    
+    df_result = df.copy()
+    
+    # Calculate class frequencies
+    class_counts = df[label_column].value_counts()
+    rare_classes = class_counts[class_counts < min_samples].index
+    large_classes = class_counts[class_counts >= min_samples].index
+    
+    if verbose:
+        print(f"   Min samples threshold: {min_samples}")
+        print(f"   Large classes (≥{min_samples} samples): {len(large_classes)}")
+        print(f"   Rare classes (<{min_samples} samples): {len(rare_classes)}")
+        print(f"   Total samples in rare classes: {class_counts[rare_classes].sum():,}")
+    
+    if len(rare_classes) == 0:
+        if verbose:
+            print(f"   ℹ️  No rare classes found. Returning original data.")
+        return df_result
+    
+    # ============================================================
+    # HIERARCHICAL GROUPING
+    # ============================================================
+    
+    if group_by_taxonomy:
+        if verbose:
+            print(f"\n   🔬 Grouping rare classes by taxonomic hierarchy...")
+        
+        rare_genus_map = {}
+        genus_counter = Counter()
+        
+        for rare_label in rare_classes:
+            # Extract genus (first part before delimiter)
+            label_str = str(rare_label)
+            
+            # Handle different taxonomy formats
+            if ';' in label_str:
+                # Format: 'k__Bacteria;p__Proteobacteria;...;g__Escherichia;s__coli'
+                parts = label_str.split(';')
+                genus_parts = [p for p in parts if p.startswith('g__')]
+                if genus_parts:
+                    genus = genus_parts[0]  # 'g__Escherichia'
+                else:
+                    genus = parts[0] if parts else 'Unknown'
+            
+            elif taxonomy_delimiter in label_str:
+                # Format: 'Escherichia_coli' or 'Genus_species'
+                genus = label_str.split(taxonomy_delimiter)[0]
+            
+            else:
+                # Single word, treat as genus itself
+                genus = label_str
+            
+            # Create rare group name
+            rare_group_name = f"RARE_{genus}"
+            rare_genus_map[rare_label] = rare_group_name
+            genus_counter[rare_group_name] += class_counts[rare_label]
+        
+        # Apply mapping
+        df_result[label_column] = df_result[label_column].replace(rare_genus_map)
+        
+        if verbose:
+            print(f"\n   📊 RARE CLASS GROUPING SUMMARY:")
+            print(f"      • Original rare classes: {len(rare_classes)}")
+            print(f"      • Grouped into: {len(genus_counter)} genus-level groups")
+            print(f"\n   Top 5 rare groups by sample count:")
+            for group, count in genus_counter.most_common(5):
+                print(f"      • {group}: {count} samples")
+    
+    # ============================================================
+    # SIMPLE GROUPING
+    # ============================================================
+    else:
+        if verbose:
+            print(f"\n   📦 Grouping all rare classes into 'RARE_CLASS'")
+        
+        df_result.loc[df_result[label_column].isin(rare_classes), label_column] = 'RARE_CLASS'
+    
+    # ============================================================
+    # FINAL STATISTICS
+    # ============================================================
+    
+    if verbose:
+        final_classes = df_result[label_column].nunique()
+        final_class_counts = df_result[label_column].value_counts()
+        
+        print(f"\n   📈 FINAL STATISTICS:")
+        print(f"      • Original classes: {len(class_counts)}")
+        print(f"      • Final classes: {final_classes}")
+        print(f"      • Reduction: {len(class_counts) - final_classes} classes")
+        print(f"      • Total samples: {len(df_result):,} (no loss)")
+        
+        # Show distribution after grouping
+        rare_group_classes = [c for c in final_class_counts.index if 'RARE' in str(c)]
+        if rare_group_classes:
+            print(f"\n   🔍 RARE GROUP SIZES:")
+            for rare_class in rare_group_classes[:5]:
+                count = final_class_counts[rare_class]
+                print(f"      • {rare_class}: {count} samples")
+            if len(rare_group_classes) > 5:
+                print(f"      ... and {len(rare_group_classes)-5} more rare groups")
+    
+    print(f"{'='*70}\n")
+    
+    return df_result
+
 
 # ============================================================
-# 🔧 UPDATED: run_extract_ with Enhanced Centroid-Based Sampling
+# 🆕 STRATEGY 2: ADAPTIVE SAMPLING WITH SMOTE
 # ============================================================
+
+def adaptive_class_sampling(
+    df, 
+    label_column='label',
+    sequence_column='sequence',
+    target_samples_per_class=100,
+    keep_all_rare=True,
+    oversample_rare=True,
+    rare_threshold=10,
+    kmer_size=6,
+    random_state=42,
+    verbose=True
+):
+    """
+    Adaptive sampling with different strategies per class size
+    
+    - Large classes (>1000): Undersample
+    - Medium classes (10-1000): Keep all or slight oversample
+    - Small classes (<10): Keep all + SMOTE oversample
+    
+    Parameters:
+    -----------
+    df : DataFrame
+        Data with sequence and label columns
+    label_column : str
+        Column name containing labels
+    sequence_column : str
+        Column name containing sequences
+    target_samples_per_class : int
+        Target number of samples per class after balancing
+    keep_all_rare : bool
+        Keep all samples from rare classes
+    oversample_rare : bool
+        Apply SMOTE to rare classes
+    rare_threshold : int
+        Threshold for "rare" classes
+    kmer_size : int
+        K-mer size for feature extraction (needed for SMOTE)
+    random_state : int
+        Random seed
+    verbose : bool
+        Print detailed statistics
+    
+    Returns:
+    --------
+    df_balanced : DataFrame
+        Balanced dataset
+    
+    Example:
+    --------
+    >>> df_balanced = adaptive_class_sampling(
+    ...     df,
+    ...     target_samples_per_class=100,
+    ...     oversample_rare=True,
+    ...     rare_threshold=10
+    ... )
+    """
+    
+    try:
+        from imblearn.over_sampling import SMOTE, ADASYN
+        from imblearn.under_sampling import RandomUnderSampler
+        IMBLEARN_AVAILABLE = True
+    except ImportError:
+        IMBLEARN_AVAILABLE = False
+        if oversample_rare:
+            print("⚠️  WARNING: imbalanced-learn not installed. Disabling SMOTE.")
+            print("   Install with: pip install imbalanced-learn")
+            oversample_rare = False
+    
+    if verbose:
+        print(f"\n{'='*70}")
+        print(f"🎚️ ADAPTIVE CLASS SAMPLING")
+        print(f"{'='*70}")
+    
+    df_result = df.copy()
+    
+    # Calculate class frequencies
+    class_counts = df[label_column].value_counts()
+    
+    # Categorize classes
+    large_classes = class_counts[class_counts > 1000].index
+    medium_classes = class_counts[(class_counts >= rare_threshold) & (class_counts <= 1000)].index
+    small_classes = class_counts[class_counts < rare_threshold].index
+    
+    if verbose:
+        print(f"   Target samples per class: {target_samples_per_class}")
+        print(f"   Rare threshold: {rare_threshold}")
+        print(f"\n   📊 CLASS CATEGORIZATION:")
+        print(f"      • Large classes (>1000): {len(large_classes)}")
+        print(f"      • Medium classes ({rare_threshold}-1000): {len(medium_classes)}")
+        print(f"      • Small classes (<{rare_threshold}): {len(small_classes)}")
+    
+    sampled_dfs = []
+    
+    # ============================================================
+    # STEP 1: Large Classes - UNDERSAMPLE
+    # ============================================================
+    
+    if len(large_classes) > 0 and verbose:
+        print(f"\n   ⬇️ UNDERSAMPLING LARGE CLASSES:")
+    
+    for label in large_classes:
+        df_class = df_result[df_result[label_column] == label]
+        n_target = min(target_samples_per_class, len(df_class))
+        df_sampled = df_class.sample(n=n_target, random_state=random_state)
+        sampled_dfs.append(df_sampled)
+        
+        if verbose:
+            print(f"      • {label[:50]}: {len(df_class):,} → {n_target} samples")
+    
+    # ============================================================
+    # STEP 2: Medium Classes - KEEP ALL
+    # ============================================================
+    
+    if len(medium_classes) > 0:
+        df_medium = df_result[df_result[label_column].isin(medium_classes)]
+        sampled_dfs.append(df_medium)
+        
+        if verbose:
+            print(f"\n   ✅ KEEPING ALL MEDIUM CLASSES:")
+            print(f"      • {len(medium_classes)} classes")
+            print(f"      • Total: {len(df_medium):,} samples")
+    
+    # ============================================================
+    # STEP 3: Small Classes - KEEP ALL + OPTIONAL SMOTE
+    # ============================================================
+    
+    if len(small_classes) > 0:
+        df_small = df_result[df_result[label_column].isin(small_classes)]
+        
+        if keep_all_rare:
+            sampled_dfs.append(df_small)
+            
+            if verbose:
+                print(f"\n   📦 KEEPING ALL SMALL CLASSES:")
+                print(f"      • {len(small_classes)} classes")
+                print(f"      • Total: {len(df_small):,} samples")
+    
+    # ============================================================
+    # STEP 4: Combine
+    # ============================================================
+    
+    if len(sampled_dfs) == 0:
+        print("   ❌ ERROR: No data after sampling!")
+        return df.head(0)
+    
+    df_balanced = pd.concat(sampled_dfs, ignore_index=True)
+    
+    # ============================================================
+    # STEP 5: Apply SMOTE (Optional)
+    # ============================================================
+    
+    if oversample_rare and IMBLEARN_AVAILABLE and len(small_classes) > 0:
+        if verbose:
+            print(f"\n   🧬 APPLYING SMOTE TO RARE CLASSES...")
+        
+        try:
+            # Extract k-mer features
+            from itertools import product
+            
+            bases = ['A', 'C', 'G', 'T']
+            all_kmers = [''.join(p) for p in product(bases, repeat=kmer_size)]
+            kmer_to_idx = {kmer: i for i, kmer in enumerate(all_kmers)}
+            n_features = len(all_kmers)
+            
+            if verbose:
+                print(f"      • Extracting k-mer features (k={kmer_size}, features={n_features})")
+            
+            # Convert sequences to k-mer features
+            X_list = []
+            y_list = []
+            
+            for idx, row in df_balanced.iterrows():
+                seq = str(row[sequence_column]).upper()
+                label = row[label_column]
+                
+                kmer_counts = Counter()
+                for i in range(len(seq) - kmer_size + 1):
+                    kmer = seq[i:i+kmer_size]
+                    if kmer in kmer_to_idx:
+                        kmer_counts[kmer] += 1
+                
+                # Convert to feature vector
+                feature_vec = np.zeros(n_features, dtype=np.float32)
+                for kmer, count in kmer_counts.items():
+                    feature_vec[kmer_to_idx[kmer]] = count
+                
+                # Normalize
+                vec_sum = feature_vec.sum()
+                if vec_sum > 0:
+                    feature_vec /= vec_sum
+                
+                X_list.append(feature_vec)
+                y_list.append(label)
+            
+            X = np.array(X_list)
+            y = np.array(y_list)
+            
+            if verbose:
+                print(f"      • Feature matrix shape: {X.shape}")
+            
+            # Apply SMOTE
+            # Calculate k_neighbors (must be < smallest class size)
+            min_class_size = pd.Series(y).value_counts().min()
+            k_neighbors = min(5, min_class_size - 1)
+            
+            if k_neighbors < 1:
+                if verbose:
+                    print(f"      ⚠️ Classes too small for SMOTE (min size: {min_class_size})")
+                    print(f"      Skipping SMOTE...")
+            else:
+                smote = SMOTE(
+                    sampling_strategy='auto',
+                    k_neighbors=k_neighbors,
+                    random_state=random_state
+                )
+                
+                X_resampled, y_resampled = smote.fit_resample(X, y)
+                
+                if verbose:
+                    print(f"      ✅ SMOTE completed:")
+                    print(f"         • Before: {len(y):,} samples")
+                    print(f"         • After: {len(y_resampled):,} samples")
+                    print(f"         • Synthetic samples added: {len(y_resampled) - len(y):,}")
+                
+                # Reconstruct dataframe (simplified - sequences not reconstructed)
+                # Note: For real use, you may want to keep original sequences
+                df_balanced_new = pd.DataFrame({
+                    label_column: y_resampled
+                })
+                
+                # Add placeholder sequences (or keep originals)
+                # This is a simplified version - in production, you'd need to handle this better
+                df_balanced_new[sequence_column] = 'SYNTHETIC_SEQUENCE'
+                
+                # Keep original sequences
+                mask_original = np.arange(len(y))
+                df_balanced_new.loc[mask_original, sequence_column] = df_balanced[sequence_column].values
+                
+                df_balanced = df_balanced_new
+        
+        except Exception as e:
+            if verbose:
+                print(f"      ❌ SMOTE failed: {e}")
+                print(f"      Using non-oversampled data")
+    
+    # ============================================================
+    # FINAL STATISTICS
+    # ============================================================
+    
+    if verbose:
+        final_counts = df_balanced[label_column].value_counts()
+        
+        print(f"\n   📈 FINAL STATISTICS:")
+        print(f"      • Original: {len(df):,} samples, {df[label_column].nunique()} classes")
+        print(f"      • Balanced: {len(df_balanced):,} samples, {df_balanced[label_column].nunique()} classes")
+        print(f"      • Avg samples/class: {final_counts.mean():.1f}")
+        print(f"      • Min samples/class: {final_counts.min()}")
+        print(f"      • Max samples/class: {final_counts.max()}")
+    
+    print(f"{'='*70}\n")
+    
+    return df_balanced
+
+
+# ============================================================
+# 🆕 STRATEGY 3: TWO-STAGE HIERARCHICAL CLASSIFIER
+# ============================================================
+
+class HierarchicalClassifier:
+    """
+    Two-stage hierarchical classifier for extreme class imbalance
+    
+    Stage 1: Classify to genus (coarse, balanced)
+    Stage 2: Within each genus, classify to species (fine-grained)
+    
+    Example:
+    --------
+    >>> # Prepare data
+    >>> df['genus'] = df['label'].str.split('_').str[0]
+    >>> df['species'] = df['label']
+    >>> 
+    >>> # Split data
+    >>> from sklearn.model_selection import train_test_split
+    >>> X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+    >>> genus_train = df.loc[y_train.index, 'genus'].values
+    >>> genus_test = df.loc[y_test.index, 'genus'].values
+    >>> 
+    >>> # Train
+    >>> clf = HierarchicalClassifier()
+    >>> clf.fit(X_train, y_train, genus_train)
+    >>> 
+    >>> # Predict
+    >>> y_pred = clf.predict(X_test, genus_test)
+    """
+    
+    def __init__(self, verbose=True):
+        self.genus_classifier = None
+        self.species_classifiers = {}
+        self.verbose = verbose
+        self.genus_to_species = {}  # Map genus → list of species
+    
+    def fit(self, X, y_species, y_genus):
+        """
+        Train hierarchical classifier
+        
+        Parameters:
+        -----------
+        X : array-like
+            Feature matrix
+        y_species : array-like
+            Species labels (fine-grained)
+        y_genus : array-like
+            Genus labels (coarse)
+        """
+        from sklearn.ensemble import RandomForestClassifier
+        
+        if self.verbose:
+            print(f"\n{'='*70}")
+            print(f"🌳 TRAINING HIERARCHICAL CLASSIFIER")
+            print(f"{'='*70}")
+        
+        # ============================================================
+        # STAGE 1: Train Genus Classifier
+        # ============================================================
+        
+        if self.verbose:
+            unique_genera = np.unique(y_genus)
+            print(f"   Stage 1: Training genus classifier...")
+            print(f"   • Number of genera: {len(unique_genera)}")
+        
+        self.genus_classifier = RandomForestClassifier(
+            n_estimators=100,
+            random_state=42,
+            n_jobs=-1
+        )
+        self.genus_classifier.fit(X, y_genus)
+        
+        if self.verbose:
+            train_acc = self.genus_classifier.score(X, y_genus)
+            print(f"   ✅ Genus classifier trained (train accuracy: {train_acc:.4f})")
+        
+        # ============================================================
+        # STAGE 2: Train Species Classifiers per Genus
+        # ============================================================
+        
+        if self.verbose:
+            print(f"\n   Stage 2: Training species classifiers per genus...")
+        
+        unique_genera = np.unique(y_genus)
+        
+        for genus_idx, genus in enumerate(unique_genera, 1):
+            mask = y_genus == genus
+            X_genus = X[mask]
+            y_species_genus = y_species[mask]
+            
+            # Get unique species in this genus
+            unique_species = np.unique(y_species_genus)
+            self.genus_to_species[genus] = unique_species
+            
+            # Skip if only 1 species in this genus
+            if len(unique_species) == 1:
+                self.species_classifiers[genus] = None
+                if self.verbose and genus_idx <= 5:
+                    print(f"      [{genus_idx}/{len(unique_genera)}] {genus}: 1 species (no classifier needed)")
+                continue
+            
+            # Train species classifier
+            clf = RandomForestClassifier(
+                n_estimators=100,
+                random_state=42,
+                n_jobs=-1
+            )
+            clf.fit(X_genus, y_species_genus)
+            self.species_classifiers[genus] = clf
+            
+            if self.verbose and genus_idx <= 5:
+                train_acc = clf.score(X_genus, y_species_genus)
+                print(f"      [{genus_idx}/{len(unique_genera)}] {genus}: {len(unique_species)} species (acc: {train_acc:.4f})")
+        
+        if self.verbose and len(unique_genera) > 5:
+            print(f"      ... and {len(unique_genera)-5} more genera")
+        
+        if self.verbose:
+            n_with_classifier = sum(1 for clf in self.species_classifiers.values() if clf is not None)
+            print(f"\n   ✅ Trained {n_with_classifier} species classifiers")
+        
+        print(f"{'='*70}\n")
+    
+    def predict(self, X, y_genus_true=None):
+        """
+        Predict species using hierarchical approach
+        
+        Parameters:
+        -----------
+        X : array-like
+            Feature matrix
+        y_genus_true : array-like, optional
+            True genus labels (if available, skips stage 1)
+        
+        Returns:
+        --------
+        y_species_pred : array
+            Predicted species labels
+        """
+        
+        # STAGE 1: Predict genus (or use true genus if provided)
+        if y_genus_true is None:
+            y_genus_pred = self.genus_classifier.predict(X)
+        else:
+            y_genus_pred = y_genus_true
+        
+        # STAGE 2: Predict species within genus
+        y_species_pred = []
+        
+        for i, genus in enumerate(y_genus_pred):
+            if genus in self.species_classifiers and self.species_classifiers[genus] is not None:
+                # Predict species within this genus
+                clf = self.species_classifiers[genus]
+                species = clf.predict(X[i:i+1])[0]
+                y_species_pred.append(species)
+            else:
+                # Only 1 species in genus, use the known species
+                if genus in self.genus_to_species:
+                    species = self.genus_to_species[genus][0]
+                    y_species_pred.append(species)
+                else:
+                    # Unknown genus, use genus as species
+                    y_species_pred.append(f"{genus}_unknown_species")
+        
+        return np.array(y_species_pred)
+    
+    def predict_proba(self, X, y_genus_true=None):
+        """
+        Predict probability for each species
+        
+        Returns:
+        --------
+        probabilities : dict
+            Dictionary of {species: probability}
+        """
+        
+        # This is a simplified version
+        # Full implementation would combine genus and species probabilities
+        
+        if y_genus_true is None:
+            y_genus_pred = self.genus_classifier.predict(X)
+            genus_proba = self.genus_classifier.predict_proba(X)
+        else:
+            y_genus_pred = y_genus_true
+            genus_proba = None
+        
+        results = []
+        
+        for i, genus in enumerate(y_genus_pred):
+            if genus in self.species_classifiers and self.species_classifiers[genus] is not None:
+                clf = self.species_classifiers[genus]
+                species_proba = clf.predict_proba(X[i:i+1])[0]
+                species_classes = clf.classes_
+                
+                proba_dict = dict(zip(species_classes, species_proba))
+            else:
+                # Single species
+                if genus in self.genus_to_species:
+                    species = self.genus_to_species[genus][0]
+                    proba_dict = {species: 1.0}
+                else:
+                    proba_dict = {f"{genus}_unknown_species": 1.0}
+            
+            results.append(proba_dict)
+        
+        return results
+
+
+# ============================================================
+# 🆕 STRATEGY 4: COST-SENSITIVE LEARNING
+# ============================================================
+
+def compute_class_weights(y, strategy='balanced', verbose=True):
+    """
+    Compute class weights to penalize rare class misclassification
+    
+    Parameters:
+    -----------
+    y : array-like
+        Class labels
+    strategy : str
+        - 'balanced': sklearn's balanced weighting
+        - 'inverse_freq': Max_count / class_count
+        - 'log_balanced': Log-scaled balanced weighting
+        - 'sqrt_balanced': Sqrt-scaled balanced weighting
+    verbose : bool
+        Print weight statistics
+    
+    Returns:
+    --------
+    class_weights : dict
+        Dictionary of {class: weight}
+    
+    Example:
+    --------
+    >>> # For use with sklearn
+    >>> from sklearn.ensemble import RandomForestClassifier
+    >>> 
+    >>> weights = compute_class_weights(y_train, strategy='log_balanced')
+    >>> 
+    >>> model = RandomForestClassifier(class_weight=weights)
+    >>> model.fit(X_train, y_train)
+    """
+    from sklearn.utils.class_weight import compute_class_weight
+    
+    if verbose:
+        print(f"\n{'='*70}")
+        print(f"⚖️ COMPUTING CLASS WEIGHTS")
+        print(f"{'='*70}")
+        print(f"   Strategy: {strategy}")
+    
+    classes = np.unique(y)
+    class_counts = pd.Series(y).value_counts()
+    
+    if strategy == 'balanced':
+        weights = compute_class_weight('balanced', classes=classes, y=y)
+        weight_dict = dict(zip(classes, weights))
+    
+    elif strategy == 'inverse_freq':
+        max_count = class_counts.max()
+        weight_dict = {cls: max_count / class_counts[cls] for cls in classes}
+    
+    elif strategy == 'log_balanced':
+        max_count = class_counts.max()
+        weight_dict = {cls: np.log(max_count / class_counts[cls] + 1) for cls in classes}
+    
+    elif strategy == 'sqrt_balanced':
+        max_count = class_counts.max()
+        weight_dict = {cls: np.sqrt(max_count / class_counts[cls]) for cls in classes}
+    
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}")
+    
+    if verbose:
+        # Show statistics
+        weights_series = pd.Series(weight_dict)
+        
+        print(f"\n   📊 WEIGHT STATISTICS:")
+        print(f"      • Number of classes: {len(classes)}")
+        print(f"      • Min weight: {weights_series.min():.4f}")
+        print(f"      • Max weight: {weights_series.max():.4f}")
+        print(f"      • Mean weight: {weights_series.mean():.4f}")
+        print(f"      • Weight ratio (max/min): {weights_series.max()/weights_series.min():.2f}x")
+        
+        # Show top 5 weighted classes (usually rare classes)
+        print(f"\n   🔝 TOP 5 WEIGHTED CLASSES (highest penalty):")
+        sorted_weights = sorted(weight_dict.items(), key=lambda x: x[1], reverse=True)
+        for cls, weight in sorted_weights[:5]:
+            count = class_counts[cls]
+            print(f"      • {str(cls)[:50]}: weight={weight:.4f} (n={count})")
+    
+    print(f"{'='*70}\n")
+    
+    return weight_dict
+
+# ============================================================
+# 🔧 UPDATED: run_extract_ WITH ALL STRATEGIES
+# ============================================================
+
 def run_extract_(
         df_tax,
         columns_select,
@@ -554,14 +1479,26 @@ def run_extract_(
         sample_fraction=0.1,
         min_samples_per_class=10,
         kmer_size=6,
-        small_class_threshold=10,  # 🆕 NEW
-        small_class_strategy='group',  # 🆕 NEW
+        small_class_threshold=10,
+        small_class_strategy='group',
+        
+        imbalance_strategy='hierarchical_grouping',
+        hierarchical_grouping=True,
+        
+        min_sample_freq=1,
+        filter_uncultured=True,
+        
+        # 🆕 NEW: Top N classes filtering
+        top_n_classes=None,  # NEW! Set to 100 to keep only top 100 classes
+        
+        create_plots=True,
+        plot_top_n=30,
+        
         label_used=None,
         sample_per_label=None
         ):
     """
-    Extract and save taxonomic data with advanced sampling strategies
-    WITH SMALL CLASS HANDLING
+    Extract and save taxonomic data with COMPREHENSIVE imbalance handling
     
     Parameters:
     -----------
@@ -575,21 +1512,43 @@ def run_extract_(
         If True, apply sampling strategy
     sampling_strategy : str
         'centroid_closest', 'centroid_diverse', 'centroid_kmeans', 
-        'stratified', 'balanced', 'top_n'
+        'stratified', 'balanced'
     sample_fraction : float
         Fraction to sample from each class
     min_samples_per_class : int
-        Minimum samples per class setelah sampling
+        Minimum samples per class after sampling
     kmer_size : int
         K-mer size for centroid methods
-    small_class_threshold : int (NEW)
-        Classes with ≤ this many samples are considered "small"
-    small_class_strategy : str (NEW)
+    small_class_threshold : int
+        Threshold for "small" classes
+    small_class_strategy : str
         How to handle small classes: 'group', 'skip', 'keep'
-    label_used : int (deprecated)
-        For backward compatibility
-    sample_per_label : int (deprecated)
-        For backward compatibility
+    imbalance_strategy : str
+        Main strategy: 'hierarchical_grouping', 'adaptive_sampling', 
+        'hierarchical_only', 'none'
+    hierarchical_grouping : bool
+        Apply hierarchical grouping as preprocessing
+    adaptive_sampling : bool
+        Apply adaptive sampling (SMOTE for rare classes)
+    target_samples_adaptive : int
+        Target samples per class for adaptive sampling
+    top_n_classes : int or None, default=None
+        🆕 NEW PARAMETER
+        Keep only top N classes (by sample count) after balancing
+        
+        - **None** (default) → Keep ALL classes
+        - **100** → Keep only top 100 classes (most abundant)
+        - **50** → Keep only top 50 classes
+        
+        ⚠️  Applied AFTER balancing/grouping
+        
+        Example:
+        >>> # Keep only top 100 classes
+        >>> run_extract_(
+        ...     df_tax,
+        ...     top_n_classes=100,  # Only 100 largest classes
+        ...     hierarchical_grouping=True
+        ... )
     
     Returns:
     --------
@@ -600,16 +1559,28 @@ def run_extract_(
     
     Examples:
     ---------
-    # With small class grouping (RECOMMENDED)
-    >>> csv_paths, paths_file = run_extract_(
+    # RECOMMENDED: Hierarchical grouping + centroid sampling
+    >>> csv_paths, _ = run_extract_(
     ...     df_tax,
     ...     columns_select=['genus', 'species'],
-    ...     output_path=folders['dataset'],
+    ...     output_path='./output',
     ...     generate_dummy=True,
     ...     sampling_strategy='centroid_closest',
     ...     sample_fraction=0.1,
-    ...     small_class_threshold=10,
-    ...     small_class_strategy='group'  # Group small classes
+    ...     imbalance_strategy='hierarchical_grouping',
+    ...     hierarchical_grouping=True,
+    ...     small_class_threshold=10
+    ... )
+    
+    # ADVANCED: Hierarchical + Adaptive + SMOTE
+    >>> csv_paths, _ = run_extract_(
+    ...     df_tax,
+    ...     columns_select=['species'],
+    ...     output_path='./output',
+    ...     generate_dummy=True,
+    ...     imbalance_strategy='adaptive_sampling',
+    ...     adaptive_sampling=True,
+    ...     target_samples_adaptive=100
     ... )
     """
     
@@ -617,23 +1588,79 @@ def run_extract_(
     
     for column in columns_select:
         print(f"\n{'='*70}")
-        print(f"🔬 Processing level: {column.upper()}")
+        print(f"🔬 PROCESSING LEVEL: {column.upper()}")
         print(f"{'='*70}")
         
-        # Step 1: Filter awal
+        # ============================================================
+        # STEP 1: Initial Filtering
+        # ============================================================
+
         df_result, csv_path = level_extract_plot_freq(
             df_tax, 
             path_=output_path, 
-            level=column
+            level=column,
+            filter_uncultured=filter_uncultured,
+            min_sample_freq=min_sample_freq
         )
         
-        # Step 2: Apply sampling strategy
+        print(f"\n📊 DATA AFTER INITIAL FILTERING:")
+        print(f"   • Samples: {len(df_result):,}")
+        print(f"   • Classes: {df_result['label'].nunique()}")
+        
+        class_dist = df_result['label'].value_counts()
+        print(f"   • Min class size: {class_dist.min()}")
+        print(f"   • Max class size: {class_dist.max()}")
+        print(f"   • Imbalance ratio: {class_dist.max() / class_dist.min():.1f}:1")
+        
+        # Store "before" data for comparison
+        df_before = df_result.copy()
+        # ============================================================
+        # STEP 2: Apply Imbalance Handling Strategy
+        # ============================================================
+        
         if generate_dummy:
-            print(f"\n📊 Applying sampling strategy: {sampling_strategy}")
             
-            # ============================================================
-            # CENTROID-BASED METHODS (ENHANCED)
-            # ============================================================
+            # --------------------------------------------------------
+            # STRATEGY A: HIERARCHICAL GROUPING (RECOMMENDED)
+            # --------------------------------------------------------
+            
+            if imbalance_strategy == 'hierarchical_grouping' or hierarchical_grouping:
+                print(f"\n🌳 APPLYING HIERARCHICAL GROUPING...")
+                
+                df_result = hierarchical_rare_grouping(
+                    df_result,
+                    label_column='label',
+                    min_samples=small_class_threshold,
+                    group_by_taxonomy=True,
+                    taxonomy_delimiter='_',
+                    verbose=True
+                )
+            
+            # --------------------------------------------------------
+            # STRATEGY B: ADAPTIVE SAMPLING WITH SMOTE
+            # --------------------------------------------------------
+            
+            if imbalance_strategy == 'adaptive_sampling' or adaptive_sampling:
+                print(f"\n🎚️ APPLYING ADAPTIVE SAMPLING...")
+                
+                df_result = adaptive_class_sampling(
+                    df_result,
+                    label_column='label',
+                    sequence_column='sequence',
+                    target_samples_per_class=target_samples_adaptive,
+                    keep_all_rare=True,
+                    oversample_rare=True,
+                    rare_threshold=small_class_threshold,
+                    kmer_size=kmer_size,
+                    verbose=True
+                )
+            
+            # --------------------------------------------------------
+            # STRATEGY C: STANDARD SAMPLING (EXISTING)
+            # --------------------------------------------------------
+            
+            print(f"\n📊 APPLYING SAMPLING STRATEGY: {sampling_strategy}")
+            
             if sampling_strategy.startswith('centroid_'):
                 method = sampling_strategy.replace('centroid_', '')
                 
@@ -649,9 +1676,6 @@ def run_extract_(
                     small_class_strategy=small_class_strategy
                 )
             
-            # ============================================================
-            # STRATIFIED RANDOM
-            # ============================================================
             elif sampling_strategy == 'stratified':
                 print(f"   📦 Stratified random sampling: {sample_fraction*100:.1f}%")
                 
@@ -664,12 +1688,7 @@ def run_extract_(
                     ))
                     .reset_index(drop=True)
                 )
-                
-                print(f"   ✅ Sampled: {len(df_sampled)} samples from {df_sampled['label'].nunique()} classes")
             
-            # ============================================================
-            # BALANCED
-            # ============================================================
             elif sampling_strategy == 'balanced':
                 n_per_class = sample_per_label if sample_per_label else min_samples_per_class
                 print(f"   ⚖️ Balanced sampling: {n_per_class} samples per class")
@@ -682,64 +1701,159 @@ def run_extract_(
                     ))
                     .reset_index(drop=True)
                 )
-                
-                print(f"   ✅ Sampled: {len(df_sampled)} samples from {df_sampled['label'].nunique()} classes")
-            
-            # ============================================================
-            # TOP_N (Deprecated)
-            # ============================================================
-            elif sampling_strategy == 'top_n':
-                print(f"   ⚠️ Using deprecated 'top_n' strategy")
-                
-                label_counts = df_result['label'].value_counts()
-                n_labels = label_used if label_used else 10
-                top_labels = label_counts.head(n_labels).index
-                
-                df_top = df_result[df_result['label'].isin(top_labels)].copy()
-                n_per_class = sample_per_label if sample_per_label else 10
-                
-                df_sampled = (
-                    df_top.groupby('label', group_keys=False)
-                    .apply(lambda x: x.sample(min(len(x), n_per_class), random_state=42))
-                    .reset_index(drop=True)
-                )
-                
-                print(f"   ⚠️ Only {n_labels} top classes used")
-                print(f"   ✅ Sampled: {len(df_sampled)} samples from {df_sampled['label'].nunique()} classes")
             
             else:
                 raise ValueError(f"Unknown sampling_strategy: '{sampling_strategy}'")
-            
-            # ============================================================
-            # Print Statistics
-            # ============================================================
-            print(f"\n📊 COMPARISON:")
-            print(f"   Before: {len(df_result):,} samples, {df_result['label'].nunique()} classes")
-            print(f"   After:  {len(df_sampled):,} samples, {df_sampled['label'].nunique()} classes")
-            print(f"   Reduction: {(1 - len(df_sampled)/len(df_result))*100:.1f}%")
-            
+        
         else:
-            print(f"   📦 Using FULL dataset (no sampling)")
+            print(f"\n   📦 Using FULL dataset (no sampling)")
             df_sampled = df_result.copy()
         
         # ============================================================
-        # Save to CSV
+        # 🆕 NEW: TOP N CLASSES FILTERING (AFTER BALANCING)
         # ============================================================
+        
+        if top_n_classes is not None and top_n_classes > 0:
+            print(f"\n{'='*70}")
+            print(f"🔝 FILTERING: KEEPING ONLY TOP {top_n_classes} CLASSES")
+            print(f"{'='*70}")
+            
+            # Get class counts
+            class_counts = df_result['label'].value_counts()
+            
+            print(f"\n📊 BEFORE TOP-N FILTERING:")
+            print(f"   • Total classes: {len(class_counts)}")
+            print(f"   • Total samples: {len(df_result):,}")
+            
+            if len(class_counts) > top_n_classes:
+                # Select top N classes
+                top_classes = class_counts.nlargest(top_n_classes).index
+                
+                # Filter dataframe
+                df_result = df_result[df_result['label'].isin(top_classes)].copy()
+                df_result = df_result.reset_index(drop=True)
+                
+                # Calculate statistics
+                dropped_classes = len(class_counts) - top_n_classes
+                dropped_samples = len(df_before) - len(df_result)
+                
+                print(f"\n✅ AFTER TOP-N FILTERING:")
+                print(f"   • Remaining classes: {df_result['label'].nunique()}")
+                print(f"   • Remaining samples: {len(df_result):,}")
+                print(f"   • Dropped classes: {dropped_classes}")
+                print(f"   • Dropped samples: {dropped_samples:,} ({(dropped_samples/len(df_before))*100:.2f}%)")
+                
+                # Show examples of kept classes
+                print(f"\n   📋 Top 10 kept classes:")
+                top_10 = df_result['label'].value_counts().head(10)
+                for idx, (cls, cnt) in enumerate(top_10.items(), 1):
+                    cls_str = str(cls)[:50] + "..." if len(str(cls)) > 53 else str(cls)
+                    print(f"      {idx:2d}. {cls_str}: {cnt} samples")
+                
+                # Show examples of dropped classes
+                dropped_class_list = class_counts[~class_counts.index.isin(top_classes)].sort_values(ascending=False)
+                if len(dropped_class_list) > 0:
+                    print(f"\n   📋 Top 10 dropped classes:")
+                    for idx, (cls, cnt) in enumerate(dropped_class_list.head(10).items(), 1):
+                        cls_str = str(cls)[:50] + "..." if len(str(cls)) > 53 else str(cls)
+                        print(f"      {idx:2d}. {cls_str}: {cnt} samples")
+            else:
+                print(f"\n   ⚠️  Only {len(class_counts)} classes available (< {top_n_classes})")
+                print(f"   ✅ Keeping all {len(class_counts)} classes")
+        
+        # ============================================================
+        # STEP 3: Save Results
+        # ============================================================
+        
         if output_path:
             folder_path = os.path.join(output_path, column)
             os.makedirs(folder_path, exist_ok=True)
             
-            filename = f'{column}.csv' if generate_dummy else f'{column}.csv'
+            filename = f'{column}_sampled.csv' if generate_dummy else f'{column}.csv'
             csv_sampled_path = os.path.join(folder_path, filename)
             
             df_sampled.to_csv(csv_sampled_path, index=False)
             print(f"\n   💾 Saved to: {csv_sampled_path}")
             
+            # Save statistics
+            stats_path = os.path.join(folder_path, f'{column}_stats.txt')
+            with open(stats_path, 'w') as f:
+                f.write(f"PROCESSING STATISTICS: {column}\n")
+                f.write("="*70 + "\n\n")
+                f.write(f"Initial Data:\n")
+                f.write(f"  - Samples: {len(df_result):,}\n")
+                f.write(f"  - Classes: {df_result['label'].nunique()}\n\n")
+                f.write(f"Final Data:\n")
+                f.write(f"  - Samples: {len(df_sampled):,}\n")
+                f.write(f"  - Classes: {df_sampled['label'].nunique()}\n")
+                f.write(f"  - Reduction: {(1-len(df_sampled)/len(df_result))*100:.1f}%\n\n")
+                f.write(f"Strategy Applied:\n")
+                f.write(f"  - Imbalance: {imbalance_strategy}\n")
+                f.write(f"  - Sampling: {sampling_strategy}\n")
+            
+            print(f"   📄 Statistics saved to: {stats_path}")
+            
             csv_paths.append(csv_sampled_path)
-    
+
+       # ============================================================
+        # 🆕 STEP 4: GENERATE VISUALIZATIONS & ANALYSIS
+        # ============================================================
+        
+        if create_plots and generate_dummy and output_path:
+            folder_path = os.path.join(output_path, column)
+            
+            print(f"\n📊 GENERATING VISUALIZATIONS & ANALYSIS...")
+            
+            try:
+                # Plot 1: Distribution Comparison
+                fig_dist, stats_dist = plot_class_distribution_comparison(
+                    df_before=df_before,
+                    df_after=df_sampled,
+                    label_column='label',
+                    output_path=folder_path,
+                    level=column,
+                    show_top_n=plot_top_n
+                )
+                plt.close(fig_dist)
+                
+                # Plot 2: Correlation Analysis
+                fig_corr, corr_data = plot_correlation_matrix(
+                    df_before=df_before,
+                    df_after=df_sampled,
+                    label_column='label',
+                    output_path=folder_path,
+                    level=column,
+                    method='spearman'
+                )
+                plt.close(fig_corr)
+                
+                # Report: Comprehensive Statistics
+                report_text = generate_balancing_report(
+                    df_before=df_before,
+                    df_after=df_sampled,
+                    label_column='label',
+                    output_path=folder_path,
+                    level=column,
+                    imbalance_strategy=imbalance_strategy,
+                    sampling_strategy=sampling_strategy
+                )
+                
+                # Save correlation data
+                corr_csv_path = os.path.join(folder_path, 
+                                            f'{column}_correlation_data.csv')
+                corr_data.to_csv(corr_csv_path)
+                print(f"   💾 Correlation data saved: {corr_csv_path}")
+                
+                print(f"   ✅ All visualizations and analysis completed!")
+                
+            except Exception as e:
+                print(f"   ⚠️ WARNING: Could not generate plots: {e}")
+                import traceback
+                traceback.print_exc()   
     # ============================================================
     # Save Path List
     # ============================================================
+    
     paths_file = None
     if output_path and len(csv_paths) > 0:
         paths_file = os.path.join(output_path, 'csv_level_paths_list.txt')
@@ -749,3 +1863,731 @@ def run_extract_(
         print(f"\n📝 Path list saved to: {paths_file}")
     
     return csv_paths, paths_file
+
+# ============================================================
+# 🆕 VISUALIZATION: CLASS DISTRIBUTION COMPARISON
+# ============================================================
+
+def plot_class_distribution_comparison(
+    df_before,
+    df_after,
+    label_column='label',
+    output_path=None,
+    level='genus',
+    show_top_n=30,
+    figsize=(16, 12)
+):
+    """
+    Plot comprehensive comparison of class distributions before/after balancing
+
+    - If show_top_n is None -> plot ALL classes (figure auto-resizes)
+    - Function is resilient to very many classes (adjusts figsize, font sizes)
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from matplotlib.gridspec import GridSpec
+    import math
+    from scipy.stats import pearsonr, spearmanr
+
+    # Calculate class distributions
+    before_counts = df_before[label_column].value_counts()
+    after_counts = df_after[label_column].value_counts()
+
+    # Determine top classes (None => all classes sorted by original size desc)
+    if show_top_n is None:
+        top_classes = before_counts.sort_values(ascending=False).index.tolist()
+        n_top = len(top_classes)
+    else:
+        n_top = int(show_top_n)
+        top_classes = before_counts.nlargest(n_top).index.tolist()
+
+    # Dynamic figure sizing: scale height with number of classes for bar plot
+    base_w, base_h = figsize
+    # increase height for long class lists (0.25 inch per 10 classes)
+    extra_h = min(60, max(0, (n_top / 10) * 2))  # cap extra height
+    fig_height = max(base_h, base_h + extra_h)
+    fig = plt.figure(figsize=(base_w, fig_height))
+    gs = GridSpec(3, 2, figure=fig, hspace=0.3, wspace=0.3)
+    sns.set_style("whitegrid")
+
+    # PLOT 1: Distribution Histogram (Log Scale)
+    ax1 = fig.add_subplot(gs[0, :])
+    max_count = max(1, int(max(before_counts.max() if len(before_counts)>0 else 0,
+                                after_counts.max() if len(after_counts)>0 else 0)))
+    bins = np.logspace(0, math.log10(max_count), 50)
+    ax1.hist(before_counts.values, bins=bins, alpha=0.6, label='Before',
+             color='#e74c3c', edgecolor='black', linewidth=0.3)
+    ax1.hist(after_counts.values, bins=bins, alpha=0.6, label='After',
+             color='#3498db', edgecolor='black', linewidth=0.3)
+    ax1.set_xscale('log')
+    ax1.set_xlabel('Class Size (log scale)', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Number of Classes', fontsize=12, fontweight='bold')
+    ax1.set_title(f'Class Size Distribution: {level.upper()}\nBefore vs After Balancing',
+                  fontsize=14, fontweight='bold', pad=12)
+    ax1.legend(fontsize=10, loc='upper right')
+    ax1.grid(True, alpha=0.3)
+    # safe stats text
+    try:
+        before_min = int(before_counts.min()) if len(before_counts)>0 else 0
+        before_max = int(before_counts.max()) if len(before_counts)>0 else 0
+        after_min = int(after_counts.min()) if len(after_counts)>0 else 0
+        after_max = int(after_counts.max()) if len(after_counts)>0 else 0
+        imbalance_before = f"{before_max}/{max(1,before_min)}"
+        imbalance_after = f"{after_max}/{max(1,after_min)}"
+        stats_text = (
+            f"Before: {len(before_counts)} classes, {len(df_before):,} samples\n"
+            f"After: {len(after_counts)} classes, {len(df_after):,} samples\n"
+            f"Imbalance ratio (max/min): {imbalance_before} → {imbalance_after}"
+        )
+    except Exception:
+        stats_text = f"Before: {len(before_counts)} classes, After: {len(after_counts)} classes"
+    ax1.text(0.02, 0.98, stats_text, transform=ax1.transAxes,
+             verticalalignment='top', fontsize=9,
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    # PLOT 2: Top N Classes Comparison (Horizontal Bar)
+    ax2 = fig.add_subplot(gs[1, :])
+    before_vals = [before_counts.get(c, 0) for c in top_classes]
+    after_vals = [after_counts.get(c, 0) for c in top_classes]
+    y_pos = np.arange(len(top_classes))
+    bar_height = 0.35
+    ax2.barh(y_pos - bar_height/2, before_vals, bar_height,
+             label='Before', color='#e74c3c', alpha=0.8)
+    ax2.barh(y_pos + bar_height/2, after_vals, bar_height,
+             label='After', color='#3498db', alpha=0.8)
+
+    # Adaptive label handling
+    if n_top > 60:
+        yt_fontsize = 6
+    elif n_top > 30:
+        yt_fontsize = 7
+    else:
+        yt_fontsize = 9
+
+    # If classes are too many, use index labels instead of long strings to avoid clutter
+    def short_label(s, maxlen=60):
+        s = str(s)
+        return (s[:maxlen-3] + '...') if len(s) > maxlen else s
+
+    if n_top <= 200:
+        class_labels = [short_label(c, maxlen=60) for c in top_classes]
+    else:
+        # when extremely many classes, use numeric index to keep plot readable
+        class_labels = [f"{i+1}" for i in range(n_top)]
+        # save mapping file if output_path provided
+        if output_path:
+            mapping_path = os.path.join(output_path, f'{level}_label_index_mapping.csv')
+            pd.DataFrame({'index': class_labels, 'label': top_classes}).to_csv(mapping_path, index=False)
+            print(f"   🔖 Saved label→index mapping: {mapping_path}")
+
+    ax2.set_yticks(y_pos)
+    ax2.set_yticklabels(class_labels, fontsize=yt_fontsize)
+    ax2.set_xlabel('Number of Samples', fontsize=11, fontweight='bold')
+    title_n = f"Top {n_top} Classes Comparison" if show_top_n is not None else f"All Classes Comparison ({n_top} classes)"
+    ax2.set_title(title_n, fontsize=12, fontweight='bold', pad=10)
+    ax2.legend(fontsize=9)
+    ax2.grid(True, alpha=0.3, axis='x')
+    ax2.invert_yaxis()
+
+    # PLOT 3: Scatter Plot (Before vs After)
+    ax3 = fig.add_subplot(gs[2, 0])
+    common_classes = sorted(set(before_counts.index) & set(after_counts.index))
+    before_common = [before_counts[c] for c in common_classes]
+    after_common = [after_counts[c] for c in common_classes]
+
+    if len(before_common) == 0 or len(after_common) == 0:
+        ax3.text(0.5, 0.5, 'No common classes to plot', ha='center', va='center')
+        pearson_r = float('nan')
+        spearman_r = float('nan')
+    else:
+        ax3.scatter(before_common, after_common, alpha=0.6, s=40, color='#9b59b6')
+        max_val = max(max(before_common), max(after_common))
+        ax3.plot([0, max_val], [0, max_val], 'r--', alpha=0.5, linewidth=1.2, label='No change')
+        ax3.set_xlabel('Samples Before', fontsize=10, fontweight='bold')
+        ax3.set_ylabel('Samples After', fontsize=10, fontweight='bold')
+        ax3.set_title('Per-Class Sample Count\n(Before vs After)', fontsize=11, fontweight='bold')
+        ax3.legend(fontsize=8)
+        ax3.grid(True, alpha=0.3)
+        try:
+            pearson_r, _ = pearsonr(before_common, after_common) if len(before_common) > 1 else (float('nan'), None)
+            spearman_r, _ = spearmanr(before_common, after_common) if len(before_common) > 1 else (float('nan'), None)
+        except Exception:
+            pearson_r = float('nan'); spearman_r = float('nan')
+
+    corr_text = f"Pearson r: {np.nan if np.isnan(pearson_r) else round(pearson_r,3)}\nSpearman ρ: {np.nan if np.isnan(spearman_r) else round(spearman_r,3)}"
+    ax3.text(0.05, 0.95, corr_text, transform=ax3.transAxes,
+             verticalalignment='top', fontsize=9,
+             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.7))
+
+    # PLOT 4: Cumulative Distribution
+    ax4 = fig.add_subplot(gs[2, 1])
+    before_sorted = np.sort(before_counts.values) if len(before_counts)>0 else np.array([0])
+    after_sorted = np.sort(after_counts.values) if len(after_counts)>0 else np.array([0])
+    before_cumsum = np.cumsum(before_sorted) / (before_sorted.sum() + 1e-12) * 100
+    after_cumsum = np.cumsum(after_sorted) / (after_sorted.sum() + 1e-12) * 100
+    ax4.plot(range(len(before_sorted)), before_cumsum, label='Before', color='#e74c3c', linewidth=2)
+    ax4.plot(range(len(after_sorted)), after_cumsum, label='After', color='#3498db', linewidth=2)
+    ax4.set_xlabel('Classes (sorted by size)', fontsize=10, fontweight='bold')
+    ax4.set_ylabel('Cumulative % of Samples', fontsize=10, fontweight='bold')
+    ax4.set_title('Cumulative Sample Distribution', fontsize=11, fontweight='bold')
+    ax4.legend(fontsize=9)
+    ax4.grid(True, alpha=0.3)
+    ax4.set_ylim([0, 105])
+    ax4.axhline(y=80, color='gray', linestyle='--', alpha=0.5, linewidth=1)
+    ax4.text(max(1, len(before_sorted))*0.7, 82, '80% line', fontsize=8, color='gray')
+
+    plt.tight_layout()
+
+    if output_path:
+        plot_path = os.path.join(output_path,
+                                 f'{level}_distribution_comparison.png')
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        print(f"   📊 Distribution plot saved: {plot_path}")
+
+    # Calculate Statistics
+    stats = {
+        'before': {
+            'n_classes': len(before_counts),
+            'n_samples': len(df_before),
+            'min_class_size': int(before_counts.min()) if len(before_counts)>0 else 0,
+            'max_class_size': int(before_counts.max()) if len(before_counts)>0 else 0,
+            'mean_class_size': float(before_counts.mean()) if len(before_counts)>0 else 0.0,
+            'median_class_size': float(before_counts.median()) if len(before_counts)>0 else 0.0,
+            'std_class_size': float(before_counts.std()) if len(before_counts)>0 else 0.0,
+            'imbalance_ratio': (int(before_counts.max()) / max(1, int(before_counts.min()))) if len(before_counts)>0 else None
+        },
+        'after': {
+            'n_classes': len(after_counts),
+            'n_samples': len(df_after),
+            'min_class_size': int(after_counts.min()) if len(after_counts)>0 else 0,
+            'max_class_size': int(after_counts.max()) if len(after_counts)>0 else 0,
+            'mean_class_size': float(after_counts.mean()) if len(after_counts)>0 else 0.0,
+            'median_class_size': float(after_counts.median()) if len(after_counts)>0 else 0.0,
+            'std_class_size': float(after_counts.std()) if len(after_counts)>0 else 0.0,
+            'imbalance_ratio': (int(after_counts.max()) / max(1, int(after_counts.min()))) if len(after_counts)>0 else None
+        },
+        'correlation': {
+            'pearson': (pearson_r if 'pearson_r' in locals() else float('nan')),
+            'spearman': (spearman_r if 'spearman_r' in locals() else float('nan'))
+        },
+        'reduction': {
+            'classes': len(before_counts) - len(after_counts),
+            'samples': len(df_before) - len(df_after),
+            'classes_pct': (1 - len(after_counts) / len(before_counts)) * 100 if len(before_counts) > 0 else None,
+            'samples_pct': (1 - len(df_after) / len(df_before)) * 100 if len(df_before) > 0 else None
+        }
+    }
+
+    return fig, stats
+
+
+# ============================================================
+# 🆕 ANALYSIS: CORRELATION MATRIX
+# ============================================================
+
+def plot_correlation_matrix(
+    df_before,
+    df_after,
+    label_column='label',
+    output_path=None,
+    level='genus',
+    method='spearman',
+    figsize=(14, 12)
+):
+    """
+    Plot correlation matrix between class distributions before and after
+    
+    Parameters:
+    -----------
+    df_before : DataFrame
+        Data before balancing
+    df_after : DataFrame
+        Data after balancing
+    label_column : str
+        Column containing class labels
+    output_path : str
+        Path to save plot
+    level : str
+        Taxonomic level name
+    method : str
+        Correlation method: 'pearson', 'spearman', or 'kendall'
+    figsize : tuple
+        Figure size
+    
+    Returns:
+    --------
+    fig : matplotlib.figure.Figure
+        The figure object
+    correlation_df : DataFrame
+        Correlation matrix
+    """
+    
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from scipy.stats import pearsonr, spearmanr, kendalltau
+    
+    # Calculate class distributions
+    before_counts = df_before[label_column].value_counts().sort_index()
+    after_counts = df_after[label_column].value_counts().sort_index()
+    
+    # Create alignment dataframe (all classes)
+    all_classes = sorted(set(before_counts.index) | set(after_counts.index))
+    
+    correlation_data = pd.DataFrame({
+        'Before': [before_counts.get(c, 0) for c in all_classes],
+        'After': [after_counts.get(c, 0) for c in all_classes],
+    }, index=all_classes)
+    
+    # Add additional metrics
+    correlation_data['Difference'] = correlation_data['After'] - correlation_data['Before']
+    correlation_data['Ratio'] = correlation_data['After'] / (correlation_data['Before'] + 1e-10)
+    correlation_data['Log_Before'] = np.log1p(correlation_data['Before'])
+    correlation_data['Log_After'] = np.log1p(correlation_data['After'])
+    
+    # Create figure
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    fig.suptitle(f'Correlation Analysis: {level.upper()}\nBefore vs After Balancing', 
+                 fontsize=16, fontweight='bold', y=1.02)
+    
+    # ============================================================
+    # PLOT 1: Correlation Heatmap
+    # ============================================================
+    
+    # Calculate correlation matrix
+    corr_matrix = correlation_data[['Before', 'After', 'Log_Before', 'Log_After']].corr(method=method)
+    
+    # Plot heatmap
+    sns.heatmap(corr_matrix, annot=True, fmt='.3f', cmap='coolwarm', 
+                center=0, vmin=-1, vmax=1,
+                square=True, linewidths=1, cbar_kws={"shrink": 0.8},
+                ax=axes[0, 0])
+    axes[0, 0].set_title(f'{method.capitalize()} Correlation Matrix', 
+                         fontsize=13, fontweight='bold', pad=10)
+    
+    # ============================================================
+    # PLOT 2: Scatter with Regression
+    # ============================================================
+    
+    ax = axes[0, 1]
+    
+    # Plot scatter
+    ax.scatter(correlation_data['Log_Before'], correlation_data['Log_After'],
+               alpha=0.6, s=50, color='#9b59b6', edgecolors='black', linewidth=0.5)
+    
+    # Add regression line
+    from scipy.stats import linregress
+    mask = (correlation_data['Before'] > 0) & (correlation_data['After'] > 0)
+    slope, intercept, r_value, p_value, std_err = linregress(
+        correlation_data.loc[mask, 'Log_Before'],
+        correlation_data.loc[mask, 'Log_After']
+    )
+    
+    x_line = np.array([correlation_data['Log_Before'].min(), 
+                       correlation_data['Log_Before'].max()])
+    y_line = slope * x_line + intercept
+    
+    ax.plot(x_line, y_line, 'r-', linewidth=2, alpha=0.8,
+            label=f'y = {slope:.2f}x + {intercept:.2f}\nR² = {r_value**2:.3f}')
+    
+    # Add diagonal (perfect correlation)
+    ax.plot(x_line, x_line, 'k--', alpha=0.3, linewidth=1, label='Perfect correlation')
+    
+    ax.set_xlabel('Log(Samples Before + 1)', fontsize=11, fontweight='bold')
+    ax.set_ylabel('Log(Samples After + 1)', fontsize=11, fontweight='bold')
+    ax.set_title('Log-Transformed Scatter Plot', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    # ============================================================
+    # PLOT 3: Residual Plot
+    # ============================================================
+    
+    ax = axes[1, 0]
+    
+    # Calculate residuals
+    predicted = slope * correlation_data['Log_Before'] + intercept
+    residuals = correlation_data['Log_After'] - predicted
+    
+    ax.scatter(correlation_data['Log_Before'], residuals,
+               alpha=0.6, s=50, color='#e67e22')
+    ax.axhline(y=0, color='red', linestyle='--', linewidth=2)
+    
+    ax.set_xlabel('Log(Samples Before + 1)', fontsize=11, fontweight='bold')
+    ax.set_ylabel('Residuals', fontsize=11, fontweight='bold')
+    ax.set_title('Residual Plot', fontsize=13, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    
+    # Add statistics
+    residual_std = residuals.std()
+    ax.text(0.05, 0.95, f'Residual Std: {residual_std:.3f}',
+            transform=ax.transAxes, verticalalignment='top', fontsize=10,
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7))
+    
+    # ============================================================
+    # PLOT 4: Class Retention Analysis
+    # ============================================================
+    
+    ax = axes[1, 1]
+    
+    # Categorize classes
+    lost_classes = [c for c in before_counts.index if c not in after_counts.index]
+    new_classes = [c for c in after_counts.index if c not in before_counts.index]
+    retained_classes = [c for c in before_counts.index if c in after_counts.index]
+    
+    # Create pie chart
+    sizes = [len(retained_classes), len(lost_classes), len(new_classes)]
+    labels = [f'Retained\n({sizes[0]})', 
+              f'Lost\n({sizes[1]})', 
+              f'New\n({sizes[2]})']
+    colors = ['#2ecc71', '#e74c3c', '#3498db']
+    explode = (0.05, 0.05, 0.05)
+    
+    wedges, texts, autotexts = ax.pie(sizes, explode=explode, labels=labels, 
+                                        colors=colors, autopct='%1.1f%%',
+                                        shadow=True, startangle=90,
+                                        textprops={'fontsize': 11, 'fontweight': 'bold'})
+    
+    ax.set_title('Class Retention', fontsize=13, fontweight='bold')
+    
+    # Make percentage text more visible
+    for autotext in autotexts:
+        autotext.set_color('white')
+        autotext.set_fontsize(10)
+        autotext.set_fontweight('bold')
+    
+    # ============================================================
+    # Save Figure
+    # ============================================================
+    
+    plt.tight_layout()
+    
+    if output_path:
+        plot_path = os.path.join(output_path, 
+                                 f'{level}_correlation_analysis.png')
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        print(f"   📈 Correlation analysis saved: {plot_path}")
+    
+    return fig, correlation_data
+
+
+# ============================================================
+# 🆕 COMPREHENSIVE STATISTICS REPORT
+# ============================================================
+
+def generate_balancing_report(
+    df_before,
+    df_after,
+    label_column='label',
+    output_path=None,
+    level='genus',
+    imbalance_strategy='hierarchical_grouping',
+    sampling_strategy='centroid_closest'
+):
+    """
+    Generate comprehensive text report of balancing statistics
+    
+    Parameters:
+    -----------
+    df_before : DataFrame
+        Data before balancing
+    df_after : DataFrame
+        Data after balancing
+    label_column : str
+        Column containing class labels
+    output_path : str
+        Path to save report
+    level : str
+        Taxonomic level name
+    imbalance_strategy : str
+        Imbalance handling strategy used
+    sampling_strategy : str
+        Sampling strategy used
+    
+    Returns:
+    --------
+    report : str
+        Report text
+    """
+    
+    from scipy.stats import pearsonr, spearmanr, ks_2samp
+    
+    # Calculate distributions
+    before_counts = df_before[label_column].value_counts()
+    after_counts = df_after[label_column].value_counts()
+    
+    # Statistical tests
+    common_classes = set(before_counts.index) & set(after_counts.index)
+    before_common = [before_counts[c] for c in common_classes]
+    after_common = [after_counts[c] for c in common_classes]
+    
+    pearson_r, pearson_p = pearsonr(before_common, after_common)
+    spearman_r, spearman_p = spearmanr(before_common, after_common)
+    ks_stat, ks_p = ks_2samp(before_counts.values, after_counts.values)
+    
+    # Build report
+    report = []
+    report.append("="*70)
+    report.append(f"CLASS BALANCING REPORT: {level.upper()}")
+    report.append("="*70)
+    report.append(f"\nGenerated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    report.append(f"Imbalance Strategy: {imbalance_strategy}")
+    report.append(f"Sampling Strategy: {sampling_strategy}")
+    
+    report.append("\n" + "="*70)
+    report.append("1. DATA SUMMARY")
+    report.append("="*70)
+    
+    report.append("\nBEFORE BALANCING:")
+    report.append(f"  • Total Samples: {len(df_before):,}")
+    report.append(f"  • Total Classes: {len(before_counts):,}")
+    report.append(f"  • Min Class Size: {before_counts.min():,}")
+    report.append(f"  • Max Class Size: {before_counts.max():,}")
+    report.append(f"  • Mean Class Size: {before_counts.mean():.1f}")
+    report.append(f"  • Median Class Size: {before_counts.median():.1f}")
+    report.append(f"  • Std Class Size: {before_counts.std():.1f}")
+    report.append(f"  • Imbalance Ratio: {before_counts.max()/before_counts.min():.1f}:1")
+    
+    report.append("\nAFTER BALANCING:")
+    report.append(f"  • Total Samples: {len(df_after):,}")
+    report.append(f"  • Total Classes: {len(after_counts):,}")
+    report.append(f"  • Min Class Size: {after_counts.min():,}")
+    report.append(f"  • Max Class Size: {after_counts.max():,}")
+    report.append(f"  • Mean Class Size: {after_counts.mean():.1f}")
+    report.append(f"  • Median Class Size: {after_counts.median():.1f}")
+    report.append(f"  • Std Class Size: {after_counts.std():.1f}")
+    report.append(f"  • Imbalance Ratio: {after_counts.max()/after_counts.min():.1f}:1")
+    
+    report.append("\n" + "="*70)
+    report.append("2. CHANGES")
+    report.append("="*70)
+    
+    sample_reduction = len(df_before) - len(df_after)
+    class_reduction = len(before_counts) - len(after_counts)
+    
+    report.append(f"\n  • Sample Reduction: {sample_reduction:,} ({sample_reduction/len(df_before)*100:.1f}%)")
+    report.append(f"  • Class Reduction: {class_reduction:,} ({class_reduction/len(before_counts)*100:.1f}%)")
+    report.append(f"  • Imbalance Improvement: {before_counts.max()/before_counts.min():.1f}:1 → {after_counts.max()/after_counts.min():.1f}:1")
+    
+    imbalance_improvement = (1 - (after_counts.max()/after_counts.min()) / (before_counts.max()/before_counts.min())) * 100
+    report.append(f"  • Imbalance Reduction: {imbalance_improvement:.1f}%")
+    
+    report.append("\n" + "="*70)
+    report.append("3. CLASS RETENTION ANALYSIS")
+    report.append("="*70)
+    
+    lost_classes = set(before_counts.index) - set(after_counts.index)
+    new_classes = set(after_counts.index) - set(before_counts.index)
+    retained_classes = common_classes
+    
+    report.append(f"\n  • Retained Classes: {len(retained_classes):,} ({len(retained_classes)/len(before_counts)*100:.1f}%)")
+    report.append(f"  • Lost Classes: {len(lost_classes):,} ({len(lost_classes)/len(before_counts)*100:.1f}%)")
+    report.append(f"  • New Classes: {len(new_classes):,}")
+    
+    if len(lost_classes) > 0:
+        report.append(f"\n  Top 10 Lost Classes (by original size):")
+        lost_sorted = sorted([(c, before_counts[c]) for c in lost_classes], 
+                            key=lambda x: x[1], reverse=True)[:10]
+        for cls, count in lost_sorted:
+            report.append(f"    - {str(cls)[:50]}: {count} samples")
+    
+    if len(new_classes) > 0:
+        report.append(f"\n  Top 10 New Classes (by size):")
+        new_sorted = sorted([(c, after_counts[c]) for c in new_classes], 
+                           key=lambda x: x[1], reverse=True)[:10]
+        for cls, count in new_sorted:
+            report.append(f"    - {str(cls)[:50]}: {count} samples")
+    
+    report.append("\n" + "="*70)
+    report.append("4. STATISTICAL TESTS")
+    report.append("="*70)
+    
+    report.append(f"\n  Pearson Correlation:")
+    report.append(f"    • r = {pearson_r:.4f}")
+    report.append(f"    • p-value = {pearson_p:.4e}")
+    report.append(f"    • Interpretation: {'Strong' if abs(pearson_r) > 0.7 else 'Moderate' if abs(pearson_r) > 0.4 else 'Weak'} linear correlation")
+    
+    report.append(f"\n  Spearman Correlation:")
+    report.append(f"    • ρ = {spearman_r:.4f}")
+    report.append(f"    • p-value = {spearman_p:.4e}")
+    report.append(f"    • Interpretation: {'Strong' if abs(spearman_r) > 0.7 else 'Moderate' if abs(spearman_r) > 0.4 else 'Weak'} monotonic correlation")
+    
+    report.append(f"\n  Kolmogorov-Smirnov Test:")
+    report.append(f"    • statistic = {ks_stat:.4f}")
+    report.append(f"    • p-value = {ks_p:.4e}")
+    report.append(f"    • Interpretation: Distributions are {'DIFFERENT' if ks_p < 0.05 else 'SIMILAR'} (α=0.05)")
+    
+    report.append("\n" + "="*70)
+    report.append("5. TOP 20 CLASSES COMPARISON")
+    report.append("="*70)
+    
+    report.append("\n{:<50} {:>10} {:>10} {:>10}".format("Class", "Before", "After", "Change"))
+    report.append("-" * 82)
+    
+    top_20 = before_counts.nlargest(20).index
+    for cls in top_20:
+        before_val = before_counts[cls]
+        after_val = after_counts.get(cls, 0)
+        change = after_val - before_val
+        change_pct = (change / before_val * 100) if before_val > 0 else 0
+        
+        cls_str = str(cls)[:47] + "..." if len(str(cls)) > 50 else str(cls)
+        report.append("{:<50} {:>10,} {:>10,} {:>+9,} ({:+.1f}%)".format(
+            cls_str, before_val, after_val, change, change_pct
+        ))
+    
+    report.append("\n" + "="*70)
+    report.append("END OF REPORT")
+    report.append("="*70)
+    
+    # Join and save
+    report_text = "\n".join(report)
+    
+    if output_path:
+        report_path = os.path.join(output_path, f'{level}_balancing_report.txt')
+        with open(report_path, 'w') as f:
+            f.write(report_text)
+        print(f"   📄 Balancing report saved: {report_path}")
+    
+    return report_text
+
+def compare_imbalance_strategies(df_tax, level='genus', output_path='./comparison'):
+    """
+    Compare all imbalance handling strategies
+    """
+    
+    strategies = {
+        'baseline': {
+            'hierarchical_grouping': False,
+            'adaptive_sampling': False,
+            'sampling_strategy': 'stratified'
+        },
+        'hierarchical_only': {
+            'hierarchical_grouping': True,
+            'adaptive_sampling': False,
+            'sampling_strategy': 'centroid_closest'
+        },
+        'adaptive_only': {
+            'hierarchical_grouping': False,
+            'adaptive_sampling': True,
+            'sampling_strategy': 'stratified'
+        },
+        'combined': {
+            'hierarchical_grouping': True,
+            'adaptive_sampling': True,
+            'sampling_strategy': 'centroid_diverse'
+        }
+    }
+    
+    results = {}
+    
+    for strategy_name, params in strategies.items():
+        print(f"\n{'='*70}")
+        print(f"Testing: {strategy_name.upper()}")
+        print(f"{'='*70}")
+        
+        csv_paths, _ = run_extract_(
+            df_tax,
+            columns_select=[level],
+            output_path=os.path.join(output_path, strategy_name),
+            generate_dummy=True,
+            **params
+        )
+        
+        # Load result
+        df_result = pd.read_csv(csv_paths[0])
+        
+        results[strategy_name] = {
+            'n_samples': len(df_result),
+            'n_classes': df_result['label'].nunique(),
+            'class_distribution': df_result['label'].value_counts().to_dict()
+        }
+    
+    return results
+
+"""
+Example 1: Hierarchical Grouping (BEST for Microbiome) ⭐⭐⭐⭐⭐
+# RECOMMENDED untuk data dengan 80,000 vs 1 sample imbalance
+csv_paths, paths_file = run_extract_(
+    df_tax,
+    columns_select=['genus', 'species'],
+    output_path='./output',
+    
+    # Main settings
+    generate_dummy=True,
+    sampling_strategy='centroid_closest',
+    sample_fraction=0.1,
+    min_samples_per_class=10,
+    kmer_size=6,
+    
+    # 🆕 Hierarchical grouping (preserves taxonomy)
+    imbalance_strategy='hierarchical_grouping',
+    hierarchical_grouping=True,
+    small_class_threshold=10,
+    small_class_strategy='group'  # Group rare by genus
+)
+
+Example 2: Adaptive Sampling with SMOTE ⭐⭐⭐
+csv_paths, paths_file = run_extract_(
+    df_tax,
+    columns_select=['species'],
+    output_path='./output',
+    
+    # Use adaptive sampling
+    generate_dummy=True,
+    imbalance_strategy='adaptive_sampling',
+    adaptive_sampling=True,
+    target_samples_adaptive=100,  # Balance to ~100 per class
+    
+    # Settings
+    small_class_threshold=10,
+    kmer_size=6
+)
+
+Example 3: Combined (Hierarchical + Adaptive + Centroid)
+# MOST COMPREHENSIVE APPROACH
+csv_paths, paths_file = run_extract_(
+    df_tax,
+    columns_select=['species'],
+    output_path='./output',
+    
+    # Step 1: Hierarchical grouping
+    hierarchical_grouping=True,
+    small_class_threshold=10,
+    
+    # Step 2: Adaptive sampling with SMOTE
+    adaptive_sampling=True,
+    target_samples_adaptive=100,
+    
+    # Step 3: Centroid-based final sampling
+    generate_dummy=True,
+    sampling_strategy='centroid_diverse',  # Diverse sampling
+    sample_fraction=0.5,  # Since already balanced, sample 50%
+    kmer_size=6
+)
+
+Example 4: Combined (Hierarchical + Adaptive + Centroid) + plot comparison
+# ✅ BEST PRACTICE: Preserve ALL rare taxa
+csv_paths, paths_file = run_extract_(
+    df_tax,
+    columns_select=['genus', 'species'],
+    output_path='/Users/tirtasetiawan/Documents/rki_v1/rki_2025/dataset',
+    
+    # 🆕 Keep all classes initially
+    min_sample_freq=1,           # ✅ NO initial filtering
+    filter_uncultured=True,      # Still remove 'uncultured'
+    
+    # Balancing strategy
+    generate_dummy=True,
+    imbalance_strategy='hierarchical_grouping',
+    hierarchical_grouping=True,   # Group rare by genus
+    sampling_strategy='centroid_closest',
+    sample_fraction=2,
+    small_class_threshold=10,     # Group if <10 samples
+    small_class_strategy='group',
+    
+    # Visualization
+    create_plots=True,
+    plot_top_n=None
+)
+
+"""
