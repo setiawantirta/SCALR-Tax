@@ -69,7 +69,7 @@ class SimpleDataLoader:
         pass
     
     def load_from_csv(self, X_train_path, X_test_path, y_train_path, y_test_path, 
-                     label_encoder_path=None):
+                 label_encoder_path=None):
         """Load data dari CSV files"""
         print("\n🔍 Loading dataset from CSV files...")
         print(f"   X_train: {X_train_path}")
@@ -125,6 +125,35 @@ class SimpleDataLoader:
                     label_encoder = pickle.load(f)
                 print(f"✅ Label encoder loaded: {len(label_encoder.classes_)} classes")
             
+            # ✅ FIX: AUTO-ENCODE LABELS IF THEY ARE STRINGS
+            print(f"\n🔍 Checking label types...")
+            print(f"   y_train dtype: {y_train.dtype}")
+            print(f"   y_train[0]: {y_train[0]}")
+            
+            if y_train.dtype == object or y_test.dtype == object:
+                print(f"   ⚠️  Labels are strings - encoding required...")
+                
+                if label_encoder is None:
+                    print(f"   🔧 Creating new LabelEncoder...")
+                    from sklearn.preprocessing import LabelEncoder
+                    label_encoder = LabelEncoder()
+                    label_encoder.fit(np.concatenate([y_train, y_test]))
+                    print(f"   ✅ New encoder created: {len(label_encoder.classes_)} classes")
+                
+                # Transform to integers
+                y_train_original = y_train.copy()  # Backup
+                y_test_original = y_test.copy()
+                
+                y_train = label_encoder.transform(y_train)
+                y_test = label_encoder.transform(y_test)
+                
+                print(f"   ✅ Labels encoded successfully")
+                print(f"      Example: '{y_train_original[0]}' → {y_train[0]}")
+                print(f"      y_train dtype: {y_train.dtype}")
+                print(f"      y_test dtype: {y_test.dtype}")
+            else:
+                print(f"   ✅ Labels already numeric (dtype: {y_train.dtype})")
+            
             # Validate dimensions
             if X_train.shape[0] != y_train.shape[0]:
                 raise ValueError(f"Dimension mismatch: X_train({X_train.shape[0]}) vs y_train({y_train.shape[0]})")
@@ -134,7 +163,7 @@ class SimpleDataLoader:
             
             # Select only component/feature columns
             feature_cols = [col for col in X_train.columns 
-                          if col.startswith('component_') or col.startswith('feature_')]
+                        if col.startswith('component_') or col.startswith('feature_')]
             
             if not feature_cols:
                 feature_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
@@ -147,8 +176,8 @@ class SimpleDataLoader:
             result = {
                 'X_train': X_train.values,
                 'X_test': X_test.values,
-                'y_train': y_train,
-                'y_test': y_test,
+                'y_train': y_train,  # ✅ Now guaranteed to be integers
+                'y_test': y_test,    # ✅ Now guaranteed to be integers
                 'label_encoder': label_encoder,
                 'feature_names': feature_cols
             }
@@ -156,8 +185,8 @@ class SimpleDataLoader:
             print(f"\n✅ Data loaded successfully!")
             print(f"   X_train: {result['X_train'].shape}")
             print(f"   X_test: {result['X_test'].shape}")
-            print(f"   y_train: {result['y_train'].shape}")
-            print(f"   y_test: {result['y_test'].shape}")
+            print(f"   y_train: {result['y_train'].shape} (dtype: {result['y_train'].dtype})")
+            print(f"   y_test: {result['y_test'].shape} (dtype: {result['y_test'].dtype})")
             print(f"   Unique classes: {len(np.unique(y_train))}")
             
             return result
@@ -461,10 +490,10 @@ def get_param_grid(model_name, search_type='grid'):
             'KNN': {
                 'classifier__n_neighbors': Integer(3, 15),
                 'classifier__weights': Categorical(['uniform', 'distance']),
-                'classifier__metric': Categorical(['euclidean', 'manhattan', 'minkowski', 'chebyshev']),
-                'classifier__p': Integer(1, 6),
-                'classifier__leaf_size': Integer(10, 51),
-                'classifier__algorithm': Categorical(['ball_tree', 'kd_tree', 'brute']),
+                'classifier__metric': Categorical(['euclidean', 'manhattan']), #, 'minkowski', 'chebyshev'
+                # 'classifier__p': Integer(1, 6),
+                # 'classifier__leaf_size': Integer(10, 51),
+                # 'classifier__algorithm': Categorical(['ball_tree', 'kd_tree', 'brute']),
             },
             'NaiveBayes': {
                 'classifier__var_smoothing': Real(1e-10, 1e-5, prior='log-uniform'),

@@ -186,54 +186,208 @@ class BenchmarkConfig:
 # =================================================================
 # 2. DATA LOADER WITH MEMORY CHECKS
 # =================================================================
-
 class DataLoader:
     """Memory-safe data loader untuk RKI struktur"""
+    
     def __init__(self, base_path: str, config: BenchmarkConfig):
         self.base_path = Path(base_path)
         self.config = config
-        
+    
     def load_data(self, level: str, kmer: int, split: str = 'train'):
-        """Load data dengan memory monitoring"""
+        """
+        Load data dengan memory monitoring
+        
+        ✅ FIX: Normalize k-mer format (support both int and string)
+        
+        Parameters:
+        -----------
+        level : str
+            Taxonomic level (e.g., 'species', 'genus')
+        kmer : int or str
+            K-mer size (e.g., 6 or "k6")
+        split : str
+            'train' or 'test'
+        
+        Returns:
+        --------
+        tuple: (X_sparse, y_array)
+        """
         MemoryManager.log_memory(f"Before loading {level} k{kmer}")
         
-        level_dir = self.base_path / level / f"k{kmer}"
-        
-        if split == 'train':
-            X_file = level_dir / f"X_train_sparse_k{kmer}_{level}.npz"
-            y_file = level_dir / f"y_train_k{kmer}_{level}.npy"
+        # ✅ NORMALIZE k-mer format
+        if isinstance(kmer, str):
+            # Input: "k6" → k_str="k6", k_int=6
+            k_str = kmer.strip()
+            k_int = int(k_str.replace('k', '').replace('K', ''))
         else:
-            X_file = level_dir / f"X_test_sparse_k{kmer}_{level}.npz"
-            y_file = level_dir / f"y_test_k{kmer}_{level}.npy"
+            # Input: 6 → k_str="k6", k_int=6
+            k_int = kmer
+            k_str = f"k{kmer}"
         
-        # Check if files exist
-        if not X_file.exists() or not y_file.exists():
-            raise FileNotFoundError(f"Data files not found: {X_file}")
+        print(f"📂 Loading {level} {k_str} ({split})...")
         
-        # Load sparse matrix
-        X_data = np.load(X_file)
-        X = sparse.csr_matrix(
-            (X_data['data'], X_data['indices'], X_data['indptr']), 
-            shape=X_data['shape']
-        )
+        level_dir = self.base_path / level / k_str
         
-        # Load labels
-        y = np.load(y_file)
+        # ✅ Define file paths (CORRECT naming)
+        if split == 'train':
+            X_file = level_dir / f"X_train_sparse_{k_str}_{level}.npz"
+            y_file = level_dir / f"y_train_{k_str}_{level}.csv"
+        else:
+            X_file = level_dir / f"X_test_sparse_{k_str}_{level}.npz"
+            y_file = level_dir / f"y_test_{k_str}_{level}.csv"
+        
+        print(f"   🔍 Looking for:")
+        print(f"      X: {X_file}")
+        print(f"      y: {y_file}")
+        
+        # ✅ Check if files exist
+        if not X_file.exists():
+            print(f"   ❌ X file not found!")
+            
+            # Try alternative paths
+            alt_paths = [
+                level_dir / f"X_{split}_{k_str}_{level}.npz",
+                level_dir / f"X_{split}_sparse_k{k_int}_{level}.npz",
+                self.base_path / level / f"k{k_int}" / f"X_{split}_sparse_k{k_int}_{level}.npz",
+            ]
+            
+            print(f"   🔄 Trying alternative paths...")
+            for alt_path in alt_paths:
+                print(f"      • {alt_path}: {'✅ Found' if alt_path.exists() else '❌ Not found'}")
+                if alt_path.exists():
+                    X_file = alt_path
+                    print(f"   ✅ Using alternative: {alt_path}")
+                    break
+            else:
+                # List directory contents for debugging
+                if level_dir.exists():
+                    print(f"\n   📂 Directory contents ({level_dir}):")
+                    for f in sorted(level_dir.iterdir()):
+                        print(f"      • {f.name}")
+                else:
+                    print(f"\n   ❌ Directory does not exist: {level_dir}")
+                
+                raise FileNotFoundError(
+                    f"❌ Data files not found!\n"
+                    f"   Primary path: {level_dir / f'X_{split}_sparse_{k_str}_{level}.npz'}\n"
+                    f"   Level: {level}, K-mer: {k_str}, Split: {split}"
+                )
+        
+        if not y_file.exists():
+            print(f"   ❌ y file not found!")
+            
+            # Try alternatives
+            alt_y_paths = [
+                level_dir / f"y_{split}_{k_str}_{level}.npy",
+                level_dir / f"y_{split}_k{k_int}_{level}.csv",
+                level_dir / f"y_{split}_k{k_int}_{level}.npy",
+            ]
+            
+            for alt_path in alt_y_paths:
+                if alt_path.exists():
+                    y_file = alt_path
+                    print(f"   ✅ Using alternative y: {alt_path}")
+                    break
+            else:
+                raise FileNotFoundError(f"❌ Label file not found: {y_file}")
+        
+        print(f"   ✅ Files validated")
+        
+        # ✅ Load sparse matrix
+        print(f"   📥 Loading sparse matrix...")
+        try:
+            X_data = sparse.load_npz(X_file)
+            print(f"      ✅ Loaded sparse matrix: {X_data.shape}")
+            print(f"      📊 Sparsity: {(1.0 - X_data.nnz / (X_data.shape[0] * X_data.shape[1]))*100:.2f}%")
+        except Exception as e:
+            print(f"      ❌ Error loading sparse matrix: {e}")
+            raise
+        
+        # ✅ Load labels (support both .csv and .npy)
+        print(f"   📥 Loading labels...")
+        try:
+            if y_file.suffix == '.csv':
+                import pandas as pd
+                y = pd.read_csv(y_file).iloc[:, 0].values
+            else:
+                y = np.load(y_file)
+            
+            print(f"      ✅ Loaded labels: {len(y)} samples")
+            print(f"      📊 Unique classes: {len(np.unique(y))}")
+        except Exception as e:
+            print(f"      ❌ Error loading labels: {e}")
+            raise
+        
+        # ✅ Validation
+        if X_data.shape[0] != len(y):
+            raise ValueError(
+                f"❌ Shape mismatch!\n"
+                f"   X: {X_data.shape[0]} samples\n"
+                f"   y: {len(y)} labels"
+            )
+        
+        print(f"   ✅ Data loaded successfully")
         
         # Estimate memory requirement
-        dense_size = MemoryManager.estimate_dense_memory(X)
-        print(f"📊 Data shape: {X.shape}")
-        print(f"💾 Sparse size: {X.data.nbytes / 1e9:.2f}GB")
-        print(f"⚠️  Dense would be: {dense_size:.2f}GB")
+        dense_size = MemoryManager.estimate_dense_memory(X_data)
+        print(f"   💾 Sparse size: {X_data.data.nbytes / 1e9:.2f}GB")
+        print(f"   ⚠️  Dense would be: {dense_size:.2f}GB")
         
         # Check if batch processing is needed
         if dense_size > self.config.max_memory_gb:
-            print(f"⚠️  WARNING: Data too large for single batch!")
-            print(f"   Will use incremental processing")
+            print(f"   ⚠️  WARNING: Data too large for single batch!")
+            print(f"      Will use incremental processing")
         
-        MemoryManager.log_memory(f"After loading {level} k{kmer}")
+        MemoryManager.log_memory(f"After loading {level} {k_str}")
         
-        return X, y
+        return X_data, y
+# class DataLoader:
+#     """Memory-safe data loader untuk RKI struktur"""
+#     def __init__(self, base_path: str, config: BenchmarkConfig):
+#         self.base_path = Path(base_path)
+#         self.config = config
+        
+#     def load_data(self, level: str, kmer: int, split: str = 'train'):
+#         """Load data dengan memory monitoring"""
+#         MemoryManager.log_memory(f"Before loading {level} k{kmer}")
+        
+#         level_dir = self.base_path / level / f"k{kmer}"
+        
+#         if split == 'train':
+#             X_file = level_dir / f"X_train_sparse_k{kmer}_{level}.npz"
+#             y_file = level_dir / f"y_train_k{kmer}_{level}.npy"
+#         else:
+#             X_file = level_dir / f"X_test_sparse_k{kmer}_{level}.npz"
+#             y_file = level_dir / f"y_test_k{kmer}_{level}.npy"
+        
+#         # Check if files exist
+#         if not X_file.exists() or not y_file.exists():
+#             raise FileNotFoundError(f"Data files not found: {X_file}")
+        
+#         # Load sparse matrix
+#         X_data = np.load(X_file)
+#         X = sparse.csr_matrix(
+#             (X_data['data'], X_data['indices'], X_data['indptr']), 
+#             shape=X_data['shape']
+#         )
+        
+#         # Load labels
+#         y = np.load(y_file)
+        
+#         # Estimate memory requirement
+#         dense_size = MemoryManager.estimate_dense_memory(X)
+#         print(f"📊 Data shape: {X.shape}")
+#         print(f"💾 Sparse size: {X.data.nbytes / 1e9:.2f}GB")
+#         print(f"⚠️  Dense would be: {dense_size:.2f}GB")
+        
+#         # Check if batch processing is needed
+#         if dense_size > self.config.max_memory_gb:
+#             print(f"⚠️  WARNING: Data too large for single batch!")
+#             print(f"   Will use incremental processing")
+        
+#         MemoryManager.log_memory(f"After loading {level} k{kmer}")
+        
+#         return X, y
 
 # =================================================================
 # 3. STRATIFIED SAMPLING BARIS JIKA KMER > 8
@@ -704,22 +858,33 @@ class DimensionalityAnalyzer:
     
     def plot_intrinsic_dimensionality(self, level: str, kmer: int, method: str):
         """
-        📊 Plot intrinsic dimensionality vs n_components (Nature journal style)
+        📊 Plot intrinsic dimensionality analysis (Nature journal style)
         
-        Enhanced features:
-        - Multi-panel layout showing different perspectives
-        - Confidence intervals from k-NN variance
-        - Efficiency ratio (intrinsic_dim / n_components)
-        - Professional styling matching Nature publications
+        Args:
+            level: Taxonomic level (e.g., 'species', 'genus')
+            kmer: K-mer size (e.g., 6, 8)
+            method: Method name (e.g., 'ipca', 'svd')
         """
         try:
-            n_comps = self.metrics_history['n_components']
-            intrinsic_vals = [v for v in self.metrics_history['intrinsic_dim'] if v is not None]
-            n_comps_valid = [n_comps[i] for i, v in enumerate(self.metrics_history['intrinsic_dim']) if v is not None]
+            print(f"\n{'='*80}")
+            print(f"📊 Creating intrinsic dimensionality analysis plots...")
+            print(f"{'='*80}")
+            
+            # ✅ GET DATA FROM SELF (not from parameters!)
+            history = self.metrics_history
+            
+            # Extract data
+            n_comps = history['n_components']
+            intrinsic_vals = [v for v in history['intrinsic_dim'] if v is not None]
+            n_comps_valid = [n_comps[i] for i, v in enumerate(history['intrinsic_dim']) if v is not None]
             
             if not intrinsic_vals:
                 print("      ⚠️  No intrinsic dim data to plot")
                 return
+            
+            print(f"   ✅ Valid data points: {len(intrinsic_vals)}")
+            print(f"      Components range: {min(n_comps_valid)} - {max(n_comps_valid)}")
+            print(f"      Intrinsic dim range: {min(intrinsic_vals):.2f} - {max(intrinsic_vals):.2f}")
             
             # ============================================
             # NATURE STYLE: 2x2 Multi-panel Figure
@@ -780,20 +945,18 @@ class DimensionalityAnalyzer:
             ax1.spines['right'].set_visible(False)
             
             # ============================================
-            # PANEL B: Efficiency Ratio (intrinsic / n_components)
+            # PANEL B: Efficiency Ratio
             # ============================================
             ax2 = plt.subplot(2, 2, 2)
             
             efficiency_ratio = [intrinsic_vals[i] / n_comps_valid[i] 
                             for i in range(len(intrinsic_vals))]
             
-            # Plot efficiency ratio
             ax2.plot(n_comps_valid, efficiency_ratio, 
                     marker='s', linewidth=2.5, markersize=7, 
                     color='#A23B72', label='Efficiency Ratio',
                     markerfacecolor='white', markeredgewidth=2)
             
-            # Add optimal efficiency zone (0.7-1.0)
             ax2.axhspan(0.7, 1.0, alpha=0.2, color='#06A77D', 
                     label='Optimal Zone (0.7-1.0)')
             
@@ -808,25 +971,21 @@ class DimensionalityAnalyzer:
             ax2.set_ylim([0, max(efficiency_ratio) * 1.1])
             
             # ============================================
-            # PANEL C: Rate of Change (Derivative)
+            # PANEL C: Rate of Change
             # ============================================
             ax3 = plt.subplot(2, 2, 3)
             
             if len(intrinsic_vals) > 1:
-                # Calculate rate of change
                 rate_of_change = np.diff(intrinsic_vals) / np.diff(n_comps_valid)
                 n_comps_diff = n_comps_valid[1:]
                 
-                # Plot rate of change
                 ax3.plot(n_comps_diff, rate_of_change, 
                         marker='^', linewidth=2.5, markersize=7, 
                         color='#F18F01', label='Rate of Change',
                         markerfacecolor='white', markeredgewidth=2)
                 
-                # Zero line
                 ax3.axhline(y=0, color='gray', linestyle='--', linewidth=1.5, alpha=0.5)
                 
-                # Highlight near-zero region (convergence)
                 threshold = np.max(np.abs(rate_of_change)) * 0.1
                 ax3.axhspan(-threshold, threshold, alpha=0.2, color='#06A77D',
                         label=f'Convergence Zone (±{threshold:.3f})')
@@ -841,11 +1000,9 @@ class DimensionalityAnalyzer:
                 ax3.spines['right'].set_visible(False)
             
             # ============================================
-            # PANEL D: Statistical Summary Box
+            # Statistical Summary Save
             # ============================================
-            ax4 = plt.subplot(2, 2, 4)
-            ax4.axis('off')
-            
+    
             # Calculate statistics
             mean_intrinsic = np.mean(intrinsic_vals)
             std_intrinsic = np.std(intrinsic_vals)
@@ -855,49 +1012,25 @@ class DimensionalityAnalyzer:
             final_n_comp = n_comps_valid[-1]
             final_efficiency = efficiency_ratio[-1]
             
-            # Create summary text
-            summary_text = f"""
-                📊 INTRINSIC DIMENSIONALITY SUMMARY
-                {'─'*45}
+            # Buat dataframe dari hasil statistik
+            data = {
+                'mean_intrinsic': [mean_intrinsic],
+                'std_intrinsic': [std_intrinsic],
+                'min_intrinsic': [min_intrinsic],
+                'max_intrinsic': [max_intrinsic],
+                'final_intrinsic': [final_intrinsic],
+                'final_n_comp': [final_n_comp],
+                'final_efficiency': [final_efficiency]
+            }
 
-                Dataset Information:
-                • Taxonomic Level: {level.upper()}
-                • K-mer Size: {kmer}
-                • Method: {method.upper()}
+            df_stats = pd.DataFrame(data)
+            filepath = self.output_dir / f'analysis_intrinsic_dimensionality_{level}_k{kmer}_{method}_summary.csv'
+            # Simpan ke file CSV
+            df_stats.to_csv(filepath, index=False)
 
-                Statistical Analysis:
-                • Mean Intrinsic Dim: {mean_intrinsic:.2f} ± {std_intrinsic:.2f}
-                • Range: [{min_intrinsic:.2f}, {max_intrinsic:.2f}]
-                • Final Estimate: {final_intrinsic:.2f}
-
-                Optimal Configuration:
-                • Final n_components: {final_n_comp}
-                • Efficiency Ratio: {final_efficiency:.3f}
-                • Dimension Reduction: {((1 - final_intrinsic/final_n_comp)*100):.1f}%
-
-                Interpretation:
-                {'✅ Efficient: Intrinsic dim << n_components' if final_efficiency < 0.7 
-                else '⚠️  Consider reducing n_components' if final_efficiency > 1.0
-                else '✓ Balanced: Good efficiency ratio'}
-            """
+            print(f"Data statistik berhasil disimpan ke '{filepath.name}'")
             
-            # Add text box
-            ax4.text(0.05, 0.95, summary_text, 
-                    transform=ax4.transAxes,
-                    fontsize=10, verticalalignment='top',
-                    fontfamily='monospace',
-                    bbox=dict(boxstyle='round', facecolor='#F8F9FA', 
-                            edgecolor='#CED4DA', linewidth=2, pad=15))
-            
-            # ============================================
-            # Overall title
-            # ============================================
-            fig.suptitle(f'Intrinsic Dimensionality Analysis | {level.upper()} K{kmer} ({method.upper()})',
-                        fontsize=15, fontweight='bold', y=0.98)
-            
-            plt.tight_layout(rect=[0, 0, 1, 0.97])
-            
-            # Save with high DPI
+            # Save
             filepath = self.output_dir / f'analysis_intrinsic_dimensionality_{level}_k{kmer}_{method}.png'
             plt.savefig(filepath, dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
             plt.close()
@@ -909,7 +1042,7 @@ class DimensionalityAnalyzer:
             import traceback
             traceback.print_exc()
             plt.close('all')
-    
+
     def plot_time_execution(self, level: str, kmer: int, method: str):
         """📊 Plot time execution vs n_components"""
         try:
@@ -978,9 +1111,10 @@ class DimensionalityAnalyzer:
         """📊 Generate all comprehensive analysis plots"""
         print(f"\n   📊 Generating comprehensive analysis plots...")
         
+        # ✅ ALL CALLS NOW USE SAME SIGNATURE
         self.plot_reconstruction_error(level, kmer, method)
         self.plot_distance_correlation(level, kmer, method)
-        self.plot_intrinsic_dimensionality(level, kmer, method)
+        self.plot_intrinsic_dimensionality(level, kmer, method)  # ✅ FIXED!
         self.plot_time_execution(level, kmer, method)
         self.plot_memory_usage(level, kmer, method)
         
@@ -992,7 +1126,65 @@ class DimensionalityAnalyzer:
             print(f"      ✅ Metrics CSV: {metrics_file.name}")
         except Exception as e:
             print(f"      ❌ Failed to save metrics CSV: {e}")
-                
+            
+    def _calculate_dimensionality_summary(self, components, train_cev, test_cev, history):
+        """
+        📊 Calculate summary statistics for intrinsic dimensionality
+        """
+        # Find optimal components
+        optimal_idx = np.argmax(test_cev >= self.config.cev_threshold) if np.any(test_cev >= self.config.cev_threshold) else len(test_cev) - 1
+        
+        # Calculate metrics
+        summary = {
+            'metric': [],
+            'value': [],
+            'description': []
+        }
+        
+        # Add metrics
+        metrics = [
+            ('Optimal Components', components[optimal_idx], f'Components needed to reach {self.config.cev_threshold:.0%} CEV'),
+            ('Train CEV at Optimal', train_cev[optimal_idx], 'Training set explained variance'),
+            ('Test CEV at Optimal', test_cev[optimal_idx], 'Test set explained variance'),
+            ('CEV Gap', train_cev[optimal_idx] - test_cev[optimal_idx], 'Overfitting indicator (Train - Test)'),
+            ('Dimensionality Reduction', (1 - components[optimal_idx] / components[-1]) * 100, '% reduction from max components'),
+            ('Total Components Tested', len(components), 'Number of component configurations tested'),
+            ('Max Train CEV', train_cev[-1], 'Maximum training CEV achieved'),
+            ('Max Test CEV', test_cev[-1], 'Maximum test CEV achieved'),
+            ('Convergence Rate', np.abs(np.diff(test_cev)).mean(), 'Average CEV improvement per step'),
+            ('Final Gap', train_cev[-1] - test_cev[-1], 'Final overfitting measure'),
+        ]
+        
+        for metric, value, desc in metrics:
+            summary['metric'].append(metric)
+            summary['value'].append(f'{value:.4f}' if isinstance(value, (int, float)) else str(value))
+            summary['description'].append(desc)
+        
+        # Add optimal components index for highlighting
+        summary['optimal_components_idx'] = optimal_idx
+        
+        return summary
+
+
+    def _save_summary_to_csv(self, summary_stats: Dict, csv_path: Path):
+        """
+        💾 Save summary statistics to CSV file
+        """
+        import pandas as pd
+        
+        # Create DataFrame (exclude optimal_components_idx)
+        df = pd.DataFrame({
+            'Metric': summary_stats['metric'],
+            'Value': summary_stats['value'],
+            'Description': summary_stats['description']
+        })
+        
+        # Save to CSV
+        df.to_csv(csv_path, index=False)
+        
+        print(f"   📊 Summary statistics:")
+        for metric, value, desc in zip(summary_stats['metric'], summary_stats['value'], summary_stats['description']):
+            print(f"      • {metric}: {value}")
 # =================================================================
 # 3. PLOTTING MANAGER WITH MEMORY SAFETY - ENHANCED
 # =================================================================
@@ -1047,6 +1239,111 @@ class PlottingManager:
             plt.close('all')
             return None
     
+    # def plot_pca_feature_space_all_labels(self, X_transformed, y, level, kmer, method, output_dir, split='train'):
+    #     """
+    #     🎨 Plot PCA/Feature Space dengan SEMUA LABEL
+    #     Enhanced plot dengan legend untuk semua kelas
+    #     """
+    #     try:
+    #         if X_transformed.shape[1] < 2:
+    #             print(f"⚠️  Need at least 2 components for 2D plot")
+    #             return None
+            
+    #         # Safe sampling untuk performance
+    #         X_plot, y_plot = self._safe_sample(X_transformed, y)
+            
+    #         # Get unique classes and sort
+    #         unique_classes = np.unique(y_plot)
+    #         n_classes = len(unique_classes)
+            
+    #         print(f"   📊 Plotting {len(X_plot)} samples with {n_classes} classes...")
+            
+    #         # Create figure dengan ukuran dinamis berdasarkan jumlah kelas
+    #         if n_classes <= 10:
+    #             figsize = (14, 10)
+    #         elif n_classes <= 20:
+    #             figsize = (16, 12)
+    #         else:
+    #             figsize = (18, 14)
+            
+    #         fig, ax = plt.subplots(figsize=figsize)
+            
+    #         # Generate colors untuk semua kelas
+    #         if n_classes <= 10:
+    #             colors = plt.cm.tab10(np.linspace(0, 1, 10))
+    #         elif n_classes <= 20:
+    #             colors = plt.cm.tab20(np.linspace(0, 1, 20))
+    #         else:
+    #             # Untuk banyak kelas, gunakan colormap kontinyu
+    #             colors = plt.cm.rainbow(np.linspace(0, 1, n_classes))
+            
+    #         # Plot setiap kelas dengan warna berbeda
+    #         for idx, cls in enumerate(unique_classes):
+    #             mask = y_plot == cls
+    #             n_samples_class = np.sum(mask)
+                
+    #             ax.scatter(
+    #                 X_plot[mask, 0], 
+    #                 X_plot[mask, 1],
+    #                 c=[colors[idx % len(colors)]], 
+    #                 label=f'Class {cls} (n={n_samples_class})',
+    #                 alpha=0.6, 
+    #                 s=30,
+    #                 edgecolors='black',
+    #                 linewidth=0.3
+    #             )
+            
+    #         # Styling
+    #         ax.set_xlabel('Principal Component 1', fontsize=13, fontweight='bold')
+    #         ax.set_ylabel('Principal Component 2', fontsize=13, fontweight='bold')
+            
+    #         title = (f'PCA Feature Space - {level.upper()} K{kmer} ({method.upper()}) [{split.upper()}]\n'
+    #                 f'{len(X_plot):,} samples | {n_classes} classes | {X_transformed.shape[1]} components')
+    #         ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+            
+    #         # Legend configuration
+    #         if n_classes <= 30:
+    #             # Small number of classes: show all in legend
+    #             ax.legend(
+    #                 loc='center left', 
+    #                 bbox_to_anchor=(1, 0.5),
+    #                 fontsize=9,
+    #                 frameon=True,
+    #                 fancybox=True,
+    #                 shadow=True,
+    #                 ncol=1 if n_classes <= 20 else 2
+    #             )
+    #         else:
+    #             # Too many classes: show colorbar instead
+    #             from matplotlib.colors import Normalize
+    #             from matplotlib.cm import ScalarMappable
+                
+    #             norm = Normalize(vmin=unique_classes.min(), vmax=unique_classes.max())
+    #             sm = ScalarMappable(cmap=plt.cm.rainbow, norm=norm)
+    #             sm.set_array([])
+                
+    #             cbar = plt.colorbar(sm, ax=ax, pad=0.02)
+    #             cbar.set_label('Class Label', fontsize=11, fontweight='bold')
+            
+    #         ax.grid(True, alpha=0.3, linestyle='--')
+            
+    #         # Save dengan nama yang jelas
+    #         filename = f"pca_feature_space_all_labels_{split}.{self.plot_format}"
+    #         filepath = output_dir / filename
+    #         plt.savefig(filepath, dpi=self.dpi, bbox_inches='tight')
+    #         plt.close()
+            
+    #         print(f"   ✅ PCA feature space plot saved: {filename}")
+            
+    #         MemoryManager.force_gc()
+    #         return str(filepath)
+            
+    #     except Exception as e:
+    #         print(f"⚠️  Failed to create PCA feature space plot: {e}")
+    #         import traceback
+    #         traceback.print_exc()
+    #         plt.close('all')
+    #         return None
     def plot_pca_feature_space_all_labels(self, X_transformed, y, level, kmer, method, output_dir, split='train'):
         """
         🎨 Plot PCA/Feature Space dengan SEMUA LABEL
@@ -1060,11 +1357,24 @@ class PlottingManager:
             # Safe sampling untuk performance
             X_plot, y_plot = self._safe_sample(X_transformed, y)
             
+            # ✅ FIX: Ensure y_plot is numeric
+            if isinstance(y_plot[0], str):
+                print(f"   ⚠️  WARNING: Labels are still STRING in plot function!")
+                print(f"      Converting to numeric using unique mapping...")
+                from sklearn.preprocessing import LabelEncoder
+                temp_encoder = LabelEncoder()
+                y_plot = temp_encoder.fit_transform(y_plot)
+            
             # Get unique classes and sort
             unique_classes = np.unique(y_plot)
             n_classes = len(unique_classes)
             
             print(f"   📊 Plotting {len(X_plot)} samples with {n_classes} classes...")
+            
+            # ✅ FIX: Ensure unique_classes is numeric for min/max
+            if not np.issubdtype(unique_classes.dtype, np.number):
+                print(f"   ❌ ERROR: unique_classes is not numeric! Type: {unique_classes.dtype}")
+                return None
             
             # Create figure dengan ukuran dinamis berdasarkan jumlah kelas
             if n_classes <= 10:
@@ -1126,7 +1436,8 @@ class PlottingManager:
                 from matplotlib.colors import Normalize
                 from matplotlib.cm import ScalarMappable
                 
-                norm = Normalize(vmin=unique_classes.min(), vmax=unique_classes.max())
+                # ✅ FIX: Use numeric min/max
+                norm = Normalize(vmin=float(unique_classes.min()), vmax=float(unique_classes.max()))
                 sm = ScalarMappable(cmap=plt.cm.rainbow, norm=norm)
                 sm.set_array([])
                 
@@ -1152,7 +1463,7 @@ class PlottingManager:
             traceback.print_exc()
             plt.close('all')
             return None
-    
+        
     def plot_pca_feature_space_3d(self, X_transformed, y, level, kmer, method, output_dir, split='train'):
         """
         🎨 Plot PCA/Feature Space 3D dengan SEMUA LABEL
@@ -1629,158 +1940,6 @@ class SimplifiedBenchmark:
                     f"{self.config.emergency_stop_threshold}%"
                 )
     
-    # def find_optimal_components(self, X, y, method, level, kmer):
-    #     """
-    #     Find optimal components dengan comprehensive metrics tracking
-        
-    #     🆕 TAMBAHAN: Track MSE, distance correlation, intrinsic dimensionality
-    #     """
-    #     MemoryManager.log_memory("Before component optimization")
-        
-    #     # Initialize analyzer
-    #     output_dir = self.output_mgr.get_output_dir(level, kmer, method)
-    #     analyzer = DimensionalityAnalyzer(output_dir)
-        
-    #     # Auto-calculate batch size
-    #     if self.config.batch_size is None:
-    #         batch_size = MemoryManager.safe_batch_size(X, self.config.max_memory_gb)
-    #         print(f"🔧 Auto batch size: {batch_size}")
-    #     else:
-    #         batch_size = self.config.batch_size
-        
-    #     if method == 'ipca':
-    #         print(f"🔍 Searching optimal components (threshold={self.config.cev_threshold})...")
-            
-    #         current_n = self.config.start_components
-    #         optimal_n = current_n
-    #         best_cev = 0.0
-            
-    #         while current_n <= self.config.max_components:
-    #             print(f"\n{'─'*70}")
-    #             print(f"   Testing n_components = {current_n}")
-    #             print(f"{'─'*70}")
-                
-    #             # Start tracking time & memory
-    #             tracemalloc.start()
-    #             start_time = time.time()
-                
-    #             try:
-    #                 # Fit model
-    #                 model = IncrementalPCA(n_components=current_n)
-                    
-    #                 n_batches = int(np.ceil(X.shape[0] / batch_size))
-    #                 pbar = tqdm(total=n_batches, desc=f"   Fitting {current_n} components", leave=False)
-                    
-    #                 for i in range(0, X.shape[0], batch_size):
-    #                     self._check_memory_emergency()
-    #                     batch = X[i:i+batch_size].toarray()
-    #                     model.partial_fit(batch)
-    #                     del batch
-    #                     MemoryManager.force_gc()
-    #                     pbar.update(1)
-    #                 pbar.close()
-                    
-    #                 # Transform untuk metrics
-    #                 print(f"   Transforming data for metrics...")
-    #                 X_transformed_list = []
-    #                 for i in range(0, X.shape[0], batch_size):
-    #                     batch = X[i:i+batch_size].toarray()
-    #                     X_transformed_list.append(model.transform(batch))
-    #                     del batch
-    #                     MemoryManager.force_gc()
-                    
-    #                 X_transformed = np.vstack(X_transformed_list)
-    #                 del X_transformed_list
-                    
-    #                 # Get original data sample untuk MSE & correlation
-    #                 sample_size = min(5000, X.shape[0])
-    #                 indices = np.random.choice(X.shape[0], sample_size, replace=False)
-    #                 X_original_sample = X[indices].toarray()
-                    
-    #                 # End tracking
-    #                 elapsed_time = time.time() - start_time
-    #                 current_mem, peak_mem = tracemalloc.get_traced_memory()
-    #                 tracemalloc.stop()
-                    
-    #                 # Calculate CEV
-    #                 variance_ratio = model.explained_variance_ratio_
-    #                 cev = np.cumsum(variance_ratio)
-    #                 best_cev = cev[-1]
-                    
-    #                 print(f"\n   ✅ CEV: {best_cev:.4f} ({best_cev*100:.2f}%)")
-                    
-    #                 # 🆕 RECORD COMPREHENSIVE METRICS
-    #                 analyzer.record_metrics(
-    #                     n_components=current_n,
-    #                     X_original=X_original_sample,
-    #                     X_reduced=X_transformed[indices],
-    #                     model=model,
-    #                     elapsed_time=elapsed_time,
-    #                     peak_memory=peak_mem
-    #                 )
-                    
-    #                 # Clean up
-    #                 del X_transformed, X_original_sample
-    #                 MemoryManager.force_gc()
-                    
-    #                 # Check threshold
-    #                 if best_cev >= self.config.cev_threshold:
-    #                     optimal_n = np.argmax(cev >= self.config.cev_threshold) + 1
-    #                     print(f"\n   ✅ Threshold reached at component {optimal_n}")
-    #                     print(f"      Final CEV: {cev[optimal_n-1]:.4f}")
-    #                     break
-                    
-    #                 current_n += self.config.step_components
-                    
-    #                 if current_n > self.config.max_components:
-    #                     optimal_n = self.config.max_components
-    #                     print(f"\n   ⚠️  Reached max_components ({self.config.max_components})")
-    #                     print(f"      Best CEV: {best_cev:.4f} (target: {self.config.cev_threshold})")
-    #                     break
-                        
-    #             except Exception as e:
-    #                 print(f"\n   ❌ Error at n={current_n}: {e}")
-    #                 tracemalloc.stop()
-    #                 continue
-            
-    #         # Final fit dengan optimal_n
-    #         print(f"\n🔧 Final fit with {optimal_n} components...")
-    #         model = IncrementalPCA(n_components=optimal_n)
-            
-    #         n_batches = int(np.ceil(X.shape[0] / batch_size))
-    #         pbar = tqdm(total=n_batches, desc="Final fitting")
-            
-    #         for i in range(0, X.shape[0], batch_size):
-    #             batch = X[i:i+batch_size].toarray()
-    #             model.partial_fit(batch)
-    #             del batch
-    #             MemoryManager.force_gc()
-    #             pbar.update(1)
-    #         pbar.close()
-            
-    #         variance_ratio = model.explained_variance_ratio_
-    #         final_cev = np.cumsum(variance_ratio)[optimal_n-1]
-            
-    #         # 🆕 GENERATE COMPREHENSIVE PLOTS
-    #         analyzer.generate_all_plots(level, kmer, method)
-            
-    #     elif method == 'svd':
-    #         # Similar implementation for SVD
-    #         print("⚠️  SVD comprehensive metrics not yet implemented")
-    #         model = TruncatedSVD(n_components=self.config.start_components)
-    #         model.fit(X)
-    #         optimal_n = self.config.start_components
-    #         variance_ratio = model.explained_variance_ratio_
-    #         final_cev = np.sum(variance_ratio)
-        
-    #     else:
-    #         return self.config.start_components, None, 0.0, None
-        
-    #     MemoryManager.log_memory("After component optimization")
-    #     MemoryManager.force_gc()
-        
-    #     return optimal_n, variance_ratio, final_cev, model
-
     def find_optimal_components(self, X, y, method, level, kmer):
         """
         Find optimal components dengan comprehensive metrics tracking
@@ -2084,6 +2243,51 @@ class SimplifiedBenchmark:
                     X_test_full, y_test_full = loader.load_data(level, kmer, 'test')
                     print(f"✅ Train data loaded: {X_train_full.shape}")
                     print(f"✅ Test data loaded: {X_test_full.shape}")
+                    
+
+                    # ✅ FIX 1: ENCODE LABELS IF STRING
+                    print(f"\n🔍 Checking label types...")
+                    print(f"   y_train type: {type(y_train_full[0])}")
+                    print(f"   y_train sample: {y_train_full[:3]}")
+                    
+                    if isinstance(y_train_full[0], str):
+                        print(f"\n🔧 Labels are STRING - encoding to numeric...")
+                        
+                        from sklearn.preprocessing import LabelEncoder
+                        import joblib
+                        
+                        # Create or load encoder
+                        encoder_path = loader.base_path / level / f"k{kmer}" / f"label_encoder_k{kmer}_{level}.pkl"
+                        
+                        if encoder_path.exists():
+                            print(f"   📂 Loading existing encoder: {encoder_path}")
+                            label_encoder = joblib.load(encoder_path)
+                        else:
+                            print(f"   ✨ Creating new encoder...")
+                            label_encoder = LabelEncoder()
+                            # Fit on combined train+test to ensure all classes known
+                            all_labels = np.concatenate([y_train_full, y_test_full])
+                            label_encoder.fit(all_labels)
+                            
+                            # Save encoder
+                            encoder_path.parent.mkdir(parents=True, exist_ok=True)
+                            joblib.dump(label_encoder, encoder_path)
+                            print(f"   💾 Encoder saved: {encoder_path}")
+                        
+                        # Transform labels
+                        y_train_full_original = y_train_full.copy()  # Keep original for reference
+                        y_test_full_original = y_test_full.copy()
+                        
+                        y_train_full = label_encoder.transform(y_train_full)
+                        y_test_full = label_encoder.transform(y_test_full)
+                        
+                        print(f"   ✅ Labels encoded:")
+                        print(f"      Original: {y_train_full_original[:3]}")
+                        print(f"      Encoded:  {y_train_full[:3]}")
+                        print(f"      Classes: {len(label_encoder.classes_)}")
+                    else:
+                        print(f"   ✅ Labels already numeric")
+                        label_encoder = None
                     
                     # 🆕 APPLY SAMPLING IF ENABLED
                     X_train, y_train, train_sampling_info = self.sampler.sample_data(
