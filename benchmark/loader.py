@@ -3873,5 +3873,3 @@ def run_extract_(
         print(f"   💾 Memory-efficient extraction completed successfully!")
     
     return csv_paths, paths_file
-
-"""
