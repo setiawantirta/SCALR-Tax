@@ -4057,6 +4057,553 @@ def run_extract_(
         print(f"   💾 Memory-efficient extraction completed successfully!")
     
     return csv_paths, paths_file
+# # ================================================================
+# # 🔄 UPDATED run_extract_ WITH BATCH PROCESSING
+# # ================================================================
+
+# def run_extract_(
+#         df_tax,
+#         columns_select,
+#         output_path=None,
+#         generate_dummy=True,
+#         sampling_strategy='centroid_closest',
+#         sample_fraction=0.1,
+#         min_samples_per_class=10,
+#         kmer_size=6,
+#         small_class_threshold=10,
+#         small_class_strategy='group',
+        
+#         imbalance_strategy='hierarchical_grouping',
+#         hierarchical_grouping=True,
+        
+#         min_sample_freq=1,
+        
+#         # Filtering parameters
+#         filter_uncultured=True,
+#         filter_metagenome=True,
+#         filter_unidentified=True,
+#         filter_environmental=False,
+#         custom_filter_keywords=None,
+#         case_sensitive_filter=False,
+        
+#         top_n_classes=None,
+
+#         # 🆕 BATCH PROCESSING PARAMETERS
+#         enable_batch_processing=True,      # Enable batch mode for large k-mers
+#         batch_size=1000,                   # Process 1000 sequences at a time
+#         batch_kmer_threshold=7,            # Enable batch for k >= 7
+#         save_intermediate=True,            # Save progress after each batch
+#         resume_from_batch=None,            # Resume from specific batch index  
+#         max_memory_gb=8.0,                 # Max memory usage in GB   
+        
+#         # ✅ NEW: Ambiguous base handling
+#         filter_ambiguous_bases=True,       # Remove sequences with N, R, Y, etc.
+#         ambiguous_handling='remove',       # 'remove', 'replace', 'random'
+#         max_ambiguous_ratio=0.05,          # Max 5% ambiguous bases allowed
+        
+#         # Visualization controls
+#         create_plots=True,
+#         plot_top_n=30,
+#         plot_correlation=True,             # 🆕 NEW: Control correlation plot
+#         correlation_method='spearman',     # 🆕 NEW: 'pearson', 'spearman', 'kendall'
+        
+#         label_used=None,
+#         sample_per_label=None
+#         ):
+#     """
+#     Extract and save taxonomic data with COMPREHENSIVE imbalance handling
+#     and BATCH K-MER EXTRACTION for large k values.
+    
+#     Parameters:
+#     -----------
+#     df_tax : pd.DataFrame
+#         Input taxonomy dataframe
+#     columns_select : list
+#         List of taxonomic levels to process (e.g., ['genus', 'species'])
+#     output_path : str
+#         Output directory path
+#     generate_dummy : bool
+#         Generate dummy k-mer features
+#     sampling_strategy : str
+#         Undersampling strategy: 'centroid_closest', 'centroid_diverse', 
+#         'centroid_kmeans', 'stratified', 'balanced', 'none'
+#     sample_fraction : float or int
+#         Fraction/number of samples to keep per class
+#     min_samples_per_class : int
+#         Minimum samples per class after sampling
+#     kmer_size : int
+#         K-mer size for feature generation
+#     small_class_threshold : int
+#         Threshold for grouping rare classes
+#     small_class_strategy : str
+#         Strategy for handling small classes: 'group' or 'remove'
+#     imbalance_strategy : str
+#         Primary imbalance handling strategy:
+#         - 'hierarchical_grouping': Group rare classes by higher taxonomy
+#         - 'adaptive_sampling': Smart sampling with SMOTE
+#     hierarchical_grouping : bool
+#         Enable hierarchical rare class grouping
+#     min_sample_freq : int
+#         Minimum frequency to keep a class initially
+    
+#     # FILTERING PARAMETERS
+#     filter_uncultured : bool
+#         Filter out 'uncultured' labels (default: True)
+#     filter_metagenome : bool
+#         Filter out 'metagenome' labels (default: True)
+#     filter_unidentified : bool
+#         Filter out 'unidentified', 'unknown', 'unclassified' labels (default: True)
+#     filter_environmental : bool
+#         Filter out 'environmental', 'clone' labels (default: False)
+#     custom_filter_keywords : list of str
+#         Additional custom keywords to filter (default: None)
+#     case_sensitive_filter : bool
+#         Perform case-sensitive keyword matching (default: False)
+    
+#     top_n_classes : int or None
+#         Keep only top N most abundant classes after balancing
+    
+#     # 🆕 BATCH PROCESSING PARAMETERS
+#     enable_batch_processing : bool, default=True
+#         Enable batch mode to prevent memory overflow
+#     batch_size : int, default=1000
+#         Number of sequences to process per batch
+#     batch_kmer_threshold : int, default=7
+#         Enable batch processing for k >= this value
+#     save_intermediate : bool, default=True
+#         Save progress after each batch (allows resume)
+#     resume_from_batch : int, optional
+#         Resume from specific batch number
+#     max_memory_gb : float, default=8.0
+#         Maximum memory usage before forcing cleanup
+        
+#     # AMBIGUOUS BASE HANDLING
+#     filter_ambiguous_bases : bool
+#         Remove sequences containing ambiguous IUPAC codes
+#     ambiguous_handling : str
+#         How to handle ambiguous bases:
+#         - 'remove': Discard sequences with ambiguous bases
+#         - 'replace': Replace with most likely base
+#         - 'random': Random choice from possibilities
+#     max_ambiguous_ratio : float
+#         Maximum ratio of ambiguous bases allowed (0.0-1.0)
+        
+#     # VISUALIZATION
+#     create_plots : bool
+#         Create visualization plots
+#     plot_top_n : int
+#         Number of top classes to show in plots
+#     plot_correlation : bool
+#         Generate correlation matrix plot
+#     correlation_method : str
+#         Correlation method: 'pearson', 'spearman', 'kendall'
+        
+#     label_used : str (deprecated)
+#         Legacy parameter for label column
+#     sample_per_label : int
+#         For 'balanced' strategy: exact number of samples per class
+        
+#     Returns:
+#     --------
+#     csv_paths : list
+#         List of paths to saved CSV files
+#     paths_file : str
+#         Path to file containing all CSV paths
+        
+#     Example:
+#     --------
+#     >>> # Standard k=6 (no batch needed)
+#     >>> csv_paths, paths_file = run_extract_(
+#     ...     df_tax,
+#     ...     columns_select=['species'],
+#     ...     output_path='/path/to/output',
+#     ...     kmer_size=6
+#     ... )
+    
+#     >>> # Large k=8 (batch mode auto-enabled)
+#     >>> csv_paths, paths_file = run_extract_(
+#     ...     df_tax,
+#     ...     columns_select=['species'],
+#     ...     output_path='/path/to/output',
+#     ...     kmer_size=8,
+#     ...     enable_batch_processing=True,
+#     ...     batch_size=1000,
+#     ...     max_memory_gb=8.0
+#     ... )
+#     """
+    
+#     csv_paths = []
+    
+#     # ✅ DETERMINE PROCESSING MODE
+#     use_batch_mode = enable_batch_processing and kmer_size >= batch_kmer_threshold
+    
+#     print(f"\n{'='*80}")
+#     print(f"🔬 K-MER FEATURE EXTRACTION PIPELINE")
+#     print(f"{'='*80}")
+#     print(f"   • K-mer size: {kmer_size}")
+#     print(f"   • Taxonomic levels: {columns_select}")
+#     print(f"   • Input sequences: {len(df_tax):,}")
+#     print(f"   • Expected features: {4**kmer_size:,} k-mers")
+    
+#     if use_batch_mode:
+#         print(f"\n⚡ BATCH MODE ENABLED")
+#         print(f"   • K >= {batch_kmer_threshold} detected")
+#         print(f"   • Batch size: {batch_size:,}")
+#         print(f"   • Max memory: {max_memory_gb} GB")
+#         print(f"   • Save intermediate: {save_intermediate}")
+#         if resume_from_batch:
+#             print(f"   • Resuming from batch: {resume_from_batch}")
+#     else:
+#         print(f"\n📊 STANDARD MODE")
+#         print(f"   • K < {batch_kmer_threshold}, using in-memory processing")
+    
+#     for column in columns_select:
+#         print(f"\n{'='*70}")
+#         print(f"🔬 PROCESSING LEVEL: {column.upper()}")
+#         print(f"{'='*70}")
+        
+#         # Make a copy to avoid modifying original
+#         df_working = df_tax.copy()
+        
+#         # ============================================================
+#         # STEP 1: Filter ambiguous sequences
+#         # ============================================================
+        
+#         if filter_ambiguous_bases:
+#             print(f"\n{'='*70}")
+#             print(f"🧹 FILTERING AMBIGUOUS BASES")
+#             print(f"{'='*70}")
+            
+#             initial_count = len(df_working)
+            
+#             # Define ambiguous bases
+#             ambiguous = set('NRYKHDBVSWM')
+            
+#             if ambiguous_handling == 'remove':
+#                 # Count ambiguous bases per sequence
+#                 def has_acceptable_ambiguous(seq):
+#                     seq_upper = str(seq).upper()
+#                     ambig_count = sum(1 for base in seq_upper if base in ambiguous)
+#                     ratio = ambig_count / len(seq_upper) if len(seq_upper) > 0 else 1.0
+#                     return ratio <= max_ambiguous_ratio
+                
+#                 df_working = df_working[df_working['sequence'].apply(has_acceptable_ambiguous)]
+                
+#                 removed = initial_count - len(df_working)
+#                 print(f"   ✅ Removed {removed:,} sequences ({removed/initial_count*100:.2f}%)")
+#                 print(f"   ✅ Remaining: {len(df_working):,} sequences")
+                
+#             elif ambiguous_handling == 'replace':
+#                 print(f"   🔄 Replacing ambiguous bases with most likely alternatives...")
+#                 df_working['sequence'] = df_working['sequence'].apply(
+#                     lambda seq: clean_sequence(seq, strategy='replace')
+#                 )
+#                 print(f"   ✅ Cleaned {initial_count:,} sequences")
+            
+#             elif ambiguous_handling == 'random':
+#                 print(f"   🎲 Randomly replacing ambiguous bases...")
+#                 df_working['sequence'] = df_working['sequence'].apply(
+#                     lambda seq: clean_sequence(seq, strategy='random')
+#                 )
+#                 print(f"   ✅ Cleaned {initial_count:,} sequences")
+                
+#         # ============================================================
+#         # STEP 2: Initial extraction
+#         # ============================================================
+        
+#         df_result, csv_path = level_extract_plot_freq(
+#             df_working, 
+#             path_=output_path, 
+#             level=column,
+#             filter_uncultured=False,
+#             min_sample_freq=min_sample_freq
+#         )
+        
+#         # ============================================================
+#         # STEP 3: Advanced label filtering
+#         # ============================================================
+        
+#         if (filter_uncultured or filter_metagenome or filter_unidentified or 
+#             filter_environmental or custom_filter_keywords):
+            
+#             df_result = filter_unwanted_labels_advanced(
+#                 df_result,
+#                 label_column='label',
+#                 filter_uncultured=filter_uncultured,
+#                 filter_metagenome=filter_metagenome,
+#                 filter_unidentified=filter_unidentified,
+#                 filter_environmental=filter_environmental,
+#                 custom_keywords=custom_filter_keywords,
+#                 case_sensitive=case_sensitive_filter,
+#                 verbose=True
+#             )
+        
+#         df_before = df_result.copy()
+        
+#         # ============================================================
+#         # STEP 4: Hierarchical grouping
+#         # ============================================================
+        
+#         if imbalance_strategy == 'hierarchical_grouping' and hierarchical_grouping:
+#             print(f"\n{'='*70}")
+#             print(f"🌳 APPLYING HIERARCHICAL GROUPING")
+#             print(f"{'='*70}")
+            
+#             df_result = hierarchical_rare_grouping(
+#                 df_result,
+#                 label_column='label',
+#                 small_class_threshold=small_class_threshold,
+#                 strategy=small_class_strategy,
+#                 kmer_size=kmer_size,
+#                 verbose=True
+#             )
+        
+#         # ============================================================
+#         # STEP 5: Adaptive sampling (if enabled)
+#         # ============================================================
+        
+#         if imbalance_strategy == 'adaptive_sampling':
+#             print(f"\n🎚️ APPLYING ADAPTIVE SAMPLING...")
+            
+#             df_result = adaptive_class_sampling(
+#                 df_result,
+#                 label_column='label',
+#                 sampling_strategy=sampling_strategy,
+#                 sample_fraction=sample_fraction,
+#                 min_samples_per_class=min_samples_per_class,
+#                 small_class_threshold=small_class_threshold,
+#                 small_class_strategy=small_class_strategy,
+#                 kmer_size=kmer_size,
+#                 verbose=True
+#             )
+        
+#         # ============================================================
+#         # STEP 6: Undersampling strategies
+#         # ============================================================
+        
+#         elif sampling_strategy in ['centroid_closest', 'centroid_diverse', 'centroid_kmeans']:
+#             print(f"\n{'='*70}")
+#             print(f"📊 APPLYING CENTROID-BASED UNDERSAMPLING")
+#             print(f"   Strategy: {sampling_strategy}")
+#             print(f"{'='*70}")
+            
+#             try:
+#                 if sampling_strategy == 'centroid_closest':
+#                     df_result = centroid_closest_sampling(
+#                         df_result,
+#                         sample_fraction=sample_fraction,
+#                         min_samples_per_class=min_samples_per_class,
+#                         kmer_size=kmer_size,
+#                         verbose=True
+#                     )
+                
+#                 elif sampling_strategy == 'centroid_diverse':
+#                     df_result = centroid_diverse_sampling(
+#                         df_result,
+#                         sample_fraction=sample_fraction,
+#                         min_samples_per_class=min_samples_per_class,
+#                         kmer_size=kmer_size,
+#                         verbose=True
+#                     )
+                
+#                 elif sampling_strategy == 'centroid_kmeans':
+#                     df_result = centroid_kmeans_sampling(
+#                         df_result,
+#                         sample_fraction=sample_fraction,
+#                         min_samples_per_class=min_samples_per_class,
+#                         kmer_size=kmer_size,
+#                         verbose=True
+#                     )
+            
+#             except NameError as e:
+#                 print(f"\n   ⚠️  WARNING: Sampling function not found: {e}")
+#                 print(f"   ℹ️  Skipping undersampling, keeping all data")
+        
+#         elif sampling_strategy == 'stratified':
+#             print(f"\n{'='*70}")
+#             print(f"📊 APPLYING STRATIFIED SAMPLING")
+#             print(f"{'='*70}")
+            
+#             df_result = stratified_sampling(
+#                 df_result,
+#                 sample_fraction=sample_fraction,
+#                 min_samples_per_class=min_samples_per_class,
+#                 verbose=True
+#             )
+        
+#         elif sampling_strategy == 'balanced':
+#             print(f"\n{'='*70}")
+#             print(f"⚖️ APPLYING BALANCED SAMPLING")
+#             print(f"{'='*70}")
+            
+#             if sample_per_label is None:
+#                 sample_per_label = 50
+            
+#             df_result = balanced_sampling(
+#                 df_result,
+#                 samples_per_class=sample_per_label,
+#                 min_samples_per_class=min_samples_per_class,
+#                 verbose=True
+#             )
+        
+#         # ============================================================
+#         # STEP 7: Top-N filtering
+#         # ============================================================
+        
+#         if top_n_classes is not None and top_n_classes > 0:
+#             print(f"\n{'='*70}")
+#             print(f"🔝 FILTERING: KEEPING ONLY TOP {top_n_classes} CLASSES")
+#             print(f"{'='*70}")
+            
+#             class_counts = df_result['label'].value_counts()
+            
+#             print(f"\n📊 BEFORE TOP-N FILTERING:")
+#             print(f"   • Total classes: {len(class_counts)}")
+#             print(f"   • Total samples: {len(df_result):,}")
+            
+#             if len(class_counts) > top_n_classes:
+#                 top_classes = class_counts.nlargest(top_n_classes).index
+#                 df_result = df_result[df_result['label'].isin(top_classes)].copy()
+#                 df_result = df_result.reset_index(drop=True)
+                
+#                 dropped_classes = len(class_counts) - top_n_classes
+#                 dropped_samples = len(df_before) - len(df_result)
+                
+#                 print(f"\n✅ AFTER TOP-N FILTERING:")
+#                 print(f"   • Remaining classes: {df_result['label'].nunique()}")
+#                 print(f"   • Remaining samples: {len(df_result):,}")
+#                 print(f"   • Dropped classes: {dropped_classes}")
+#                 print(f"   • Dropped samples: {dropped_samples:,}")
+        
+#         # ============================================================
+#         # 🆕 STEP 8: BATCH K-MER EXTRACTION (for k >= batch_kmer_threshold)
+#         # ============================================================
+        
+#         if use_batch_mode:
+#             print(f"\n{'='*70}")
+#             print(f"🔬 BATCH K-MER EXTRACTION (k={kmer_size})")
+#             print(f"{'='*70}")
+            
+#             # Setup intermediate directory
+#             level_output_dir = os.path.dirname(csv_path)
+#             intermediate_dir = os.path.join(level_output_dir, f'k{kmer_size}_batches')
+            
+#             # Run batch extraction
+#             df_with_kmers = extract_kmers_batch(
+#                 df=df_result,
+#                 k=kmer_size,
+#                 label_column='label',
+#                 sequence_column='sequence',
+#                 batch_size=batch_size,
+#                 save_intermediate=save_intermediate,
+#                 intermediate_dir=intermediate_dir,
+#                 resume_from_batch=resume_from_batch,
+#                 max_memory_gb=max_memory_gb,
+#                 verbose=True
+#             )
+            
+#             if df_with_kmers is not None:
+#                 df_result = df_with_kmers
+#                 print(f"\n   ✅ Batch k-mer extraction completed")
+#                 print(f"   • Total samples: {len(df_result):,}")
+#                 print(f"   • Total features: {len([c for c in df_result.columns if c.startswith('kmer_')]):,}")
+#             else:
+#                 print(f"\n   ❌ Batch k-mer extraction failed!")
+#                 print(f"   ⚠️ Continuing without k-mer features...")
+        
+#         # ============================================================
+#         # STEP 9: Save processed data
+#         # ============================================================
+        
+#         if sampling_strategy != 'none':
+#             csv_path = csv_path.replace('.csv', f'_sampled.csv')
+        
+#         df_result.to_csv(csv_path, index=False)
+#         csv_paths.append(csv_path)
+        
+#         print(f"\n{'='*70}")
+#         print(f"💾 SAVED PROCESSED DATA")
+#         print(f"{'='*70}")
+#         print(f"   📁 Path: {csv_path}")
+#         print(f"   📊 Final: {len(df_result):,} samples, {df_result['label'].nunique()} classes")
+        
+#         # Show k-mer feature count
+#         kmer_cols = [c for c in df_result.columns if c.startswith('kmer_')]
+#         if kmer_cols:
+#             print(f"   🧬 K-mer features: {len(kmer_cols):,}")
+        
+#         # ============================================================
+#         # STEP 10: Create visualizations
+#         # ============================================================
+
+#         if create_plots:
+#             print(f"\n{'='*70}")
+#             print(f"📊 CREATING VISUALIZATIONS")
+#             print(f"{'='*70}")
+            
+#             output_dir = os.path.dirname(csv_path)
+            
+#             # ✅ Distribution comparison plot
+#             try:
+#                 plot_path = os.path.join(output_dir, f'distribution_comparison_{column}.png')
+#                 plot_distribution_comparison(df_before, df_result, plot_path, column)
+#                 print(f"   ✅ Distribution plot saved")
+#             except Exception as e:
+#                 print(f"   ⚠️ Could not generate distribution plot: {e}")
+            
+#             # ✅ Correlation matrix plot
+#             if plot_correlation:
+#                 try:
+#                     print(f"\n   📈 Generating correlation matrix...")
+#                     fig_corr, corr_data = plot_correlation_matrix(
+#                         df_before=df_before,
+#                         df_after=df_result,
+#                         label_column='label',
+#                         output_path=output_dir,
+#                         level=column,
+#                         method=correlation_method,
+#                         figsize=(14, 12)
+#                     )
+#                     plt.close(fig_corr)
+                    
+#                     # Save correlation data to CSV
+#                     corr_csv_path = os.path.join(output_dir, f'{column}_correlation_data.csv')
+#                     corr_data.to_csv(corr_csv_path, index=False)
+#                     print(f"   💾 Correlation data saved: {corr_csv_path}")
+                    
+#                 except Exception as e:
+#                     print(f"   ⚠️ Could not generate correlation matrix: {e}")
+            
+#             # ✅ Frequency distribution
+#             if plot_top_n is not None and plot_top_n > 0:
+#                 try:
+#                     plot_path = os.path.join(output_dir, f'frequency_top{plot_top_n}_{column}.png')
+#                     plot_frequency_distribution(df_result, plot_path, column, top_n=plot_top_n)
+#                     print(f"   ✅ Frequency plot saved")
+#                 except Exception as e:
+#                     print(f"   ⚠️ Could not generate frequency plot: {e}")
+    
+#     # ============================================================
+#     # STEP 11: Save paths file
+#     # ============================================================
+    
+#     paths_file = os.path.join(output_path, 'csv_level_paths_list.txt')
+#     with open(paths_file, 'w') as f:
+#         for path in csv_paths:
+#             f.write(f"{path}\n")
+    
+#     print(f"\n{'='*70}")
+#     print(f"✅ EXTRACTION COMPLETED")
+#     print(f"{'='*70}")
+#     print(f"   📁 Processed {len(csv_paths)} taxonomic levels")
+#     print(f"   📄 Paths saved to: {paths_file}")
+    
+#     if use_batch_mode:
+#         print(f"\n   ⚡ Batch mode was used for k={kmer_size}")
+#         print(f"   💾 Memory-efficient extraction completed successfully!")
+    
+#     return csv_paths, paths_file
+
 # ============================================================
 # 🔧 UPDATED: run_extract_ WITH ALL STRATEGIES
 # ============================================================
