@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)]()
 
 ---
-
+![Pipeline](figures/pipeline.png)
 # Overview
 
 **SCALR-Tax** is the official reproducibility repository accompanying our manuscript submitted to the **Journal of Chemical Information and Modeling (ACS)**.
@@ -23,7 +23,7 @@ This repository provides the complete computational workflow used for scalable m
 The objective of this repository is to ensure **full computational reproducibility** of the experiments reported in the manuscript.
 
 ---
-![Pipeline](figures/pipeline.png)
+
 
 # Repository Structure
 
