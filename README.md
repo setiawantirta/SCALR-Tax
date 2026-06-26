@@ -1,15 +1,203 @@
-SCALR-Tax: Scalable Taxonomic Classification Framework 🧬💻📌 Pengantar (Scientific Reproducibility)Repositori ini menyediakan kerangka kerja komputasi dan basis kode resmi untuk manuskrip:"Scalable Machine Learning Framework for Microbial Species Classification: Addressing Class Imbalance, Dimensionality in Large-Scale 16S rRNA V3-V4 Datasets and Algorithm Optimization"(Dipersiapkan untuk publikasi di Q1 ACS Journal of Chemical Information and Modeling).Dirancang dengan standar transparansi dan reproduksibilitas saintifik yang ketat, basis kode ini mendemonstrasikan arsitektur pemodelan informasi yang inovatif. Kerangka kerja SCALR-Tax memisahkan kompleksitas biologis dari beban komputasi algoritmik untuk memecahkan tiga kebuntuan utama dalam klasifikasi 16S rRNA skala besar: ketidakseimbangan populasi mikroba, ledakan dimensi ruang fitur (hyper-sparse topologies), dan keterbatasan memori.Dengan mengimplementasikan centroid-proximity representational balancing dan Incremental Principal Component Analysis (IPCA), kode ini membuktikan bahwa sinyal taksonomi yang berdimensi tinggi dapat dikompresi ke dalam intrinsic dimensionality yang sangat rendah (<6 dimensi), memungkinkan akurasi puncak setingkat klaster (HPC) hanya menggunakan perangkat keras (workstation) standar.📂 Struktur Repositorirki-20-nov2025.ipynb : Jupyter Notebook utama yang berisi seluruh pipeline penelitian (mulai dari pra-pemrosesan, ekstraksi k-mer, reduksi dimensi IPCA, hingga optimasi hyperparameter Bayesian untuk Random Forest, SVC, dan Naive Bayes).README.md : Panduan penggunaan dan reproduksi basis kode.📥 Akuisisi Data (V3-V4 Hypervariable Region)Untuk memastikan pengulangan (reproducibility) yang akurat, matriks data referensi 16S rRNA (wilayah V3-V4) yang telah dikurasi dari repositori SILVA tersedia secara publik di Kaggle.Anda dapat mengunduh secara langsung ke environment lokal Anda menggunakan perintah bash berikut:#!/bin/bash
+# SCALR-Tax
+### Scalable Taxonomic Classification using Hypervariable 16S rRNA Regions with Incremental PCA and Bayesian Optimized Machine Learning
+
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)]()
+[![License](https://img.shields.io/badge/License-MIT-green.svg)]()
+
+---
+
+# Overview
+
+**SCALR-Tax** is the official reproducibility repository accompanying our manuscript submitted to the **Journal of Chemical Information and Modeling (ACS)**.
+
+This repository provides the complete computational workflow used for scalable microbial taxonomic classification from 16S rRNA hypervariable regions. The pipeline integrates
+
+- automatic sequence preprocessing
+- taxonomy extraction
+- ambiguity analysis
+- feature vectorization
+- Incremental PCA-based dimensionality reduction
+- Bayesian-optimized machine learning
+- comprehensive benchmarking and visualization
+
+The objective of this repository is to ensure **full computational reproducibility** of the experiments reported in the manuscript.
+
+---
+
+# Repository Structure
+
+```
+SCALR-Tax/
+│
+├── benchmark/                 # Core source code
+├── notebooks/
+│     └── rki-20-nov2025.ipynb # Main reproducibility notebook
+│
+├── datasets/                  # Dataset location (after download)
+├── results/
+├── figures/
+└── README.md
+```
+
+---
+
+# Computational Workflow
+
+The notebook reproduces the complete experimental pipeline used in the manuscript.
+
+The workflow consists of the following stages:
+
+1. Environment setup
+2. Repository initialization
+3. Dataset verification
+4. Taxonomic level extraction
+5. Ambiguous taxonomy analysis
+6. Exploratory dataset visualization
+7. Two-dimensional visualization
+8. Sequence vectorization
+9. Feature reduction using Incremental PCA
+10. Bayesian optimization and benchmark execution
+11. Model validation
+12. Result export
+
+Each stage is organized into an independent notebook section for easy execution and inspection.
+
+---
+
+# Dataset
+
+The complete V3–V4 and V4–V5 hypervariable region datasets are hosted on Kaggle.
+
+Download using:
+
+```bash
+#!/bin/bash
+
 curl -L -o ~/Downloads/v3-v4-hyper-region-filter.zip \
-  [https://www.kaggle.com/api/v1/datasets/download/indoborutoofficial/v3-v4-hyper-region-filter](https://www.kaggle.com/api/v1/datasets/download/indoborutoofficial/v3-v4-hyper-region-filter)
-Catatan: Ekstrak file .zip tersebut dan pastikan path direktori diatur dengan benar di dalam Jupyter Notebook sebelum mengeksekusi kode.🛠️ Instalasi & Persiapan Lingkungan (Setup)Pastikan Anda memiliki instalasi Python 3.9+ dan lingkungan Jupyter yang fungsional. Modul utama yang dibutuhkan oleh notebook ini meliputi:pip install numpy pandas scikit-learn scikit-optimize matplotlib seaborn jupyterlab
-Lingkungan komputasi referensi (sesuai manuskrip): Ubuntu 20.04 LTS, Python 3.9.7, scikit-learn 1.0.2, scikit-optimize 0.9.0.🚀 Panduan Eksekusi (Cara Menggunakan Notebook)Untuk memproduksi ulang hasil dari penelitian ini, ikuti langkah-langkah berikut:Kloning Repositori:git clone [https://github.com/setiawantirta/SCALR-Tax.git](https://github.com/setiawantirta/SCALR-Tax.git)
+https://www.kaggle.com/api/v1/datasets/download/indoborutoofficial/v3-v4-hyper-region-filter
+```
+
+or using Kaggle CLI
+
+```bash
+kaggle datasets download \
+indoborutoofficial/v3-v4-hyper-region-filter
+```
+
+Extract the downloaded archive into the project directory:
+
+```
+datasets/
+```
+
+so that the notebook can locate all required input files.
+
+---
+
+# Installation
+
+Clone the repository
+
+```bash
+git clone https://github.com/setiawantirta/SCALR-Tax.git
+
 cd SCALR-Tax
-Persiapkan Data: Unduh data melalui Kaggle (script di atas) dan letakkan di dalam direktori proyek (buat folder bernama /data jika diperlukan).Buka Jupyter Notebook:jupyter notebook rki-20-nov2025.ipynb
-Eksekusi Pipeline Komputasi:Bagian 1 (Setting & Data Loading): Sesuaikan parameter path file dataset Anda pada sel awal notebook.Bagian 2 (Preprocessing): Jalankan sel pra-pemrosesan untuk melakukan resolusi pasangan basa yang ambigu dan menyeimbangkan data (centroid closest undersampling).Bagian 3 (Feature Engineering & IPCA): Modul ini akan mengonversi sekuens menjadi k-mer (K=4, K=6) dan melakukan kompresi matematis menggunakan batch processing IPCA.Bagian 4 (Modeling & Bayesian Optimization): Modul ini akan menjalankan pelatihan untuk algoritma Naive Bayes, Random Forest, dan SVC. Waktu komputasi sangat bergantung pada spesifikasi CPU Anda (Random Forest & Naive Bayes akan selesai lebih cepat, sedangkan iterasi SVC mungkin memerlukan waktu komputasi intensif).Bagian 5 (Evaluation): Sel terakhir akan menghasilkan ringkasan performa yang mencakup akurasi, Macro F1-Score, dan profil efisiensi Pareto-optimal seperti yang tercantum dalam naskah jurnal.📖 SitasiJika Anda menggunakan kode, framework, atau dataset kurasi dari repositori ini untuk penelitian Anda, mohon sitasi publikasi kami:@article{Setiawan2025SCALRTax,
-  title={Scalable Machine Learning Framework for Microbial Species Classification: Addressing Class Imbalance, Dimensionality in Large-Scale 16S rRNA V3-V4 Datasets and Algorithm Optimization},
-  author={Setiawan, Tirta and Sarmoko and Suprahman, Nisa Yulianti and Desdiani and Fadilah},
-  journal={Journal of Chemical Information and Modeling},
-  year={2025},
-  publisher={American Chemical Society}
-}
-📬 KontakTirta Setiawan - tirta.setiawan@sd.itera.ac.idInstitut Teknologi Sumatera (ITERA)
+```
+
+Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+or create the conda environment if provided.
+
+---
+
+# Running the Notebook
+
+Open
+
+```
+notebooks/rki-20-nov2025.ipynb
+```
+
+Execute every section sequentially.
+
+The notebook is organized as follows.
+
+| Section | Description |
+|----------|-------------|
+| Setting | Environment initialization |
+| Check Data | Verify dataset integrity |
+| Extract Level | Taxonomic hierarchy extraction |
+| Check Ambiguous | Detection of ambiguous taxonomy |
+| Plot Analysis Dataset | Dataset exploration |
+| Plot 2 Component | Visualization |
+| Vectorization | Sequence feature generation |
+| Feature Reduction | Incremental PCA |
+| Model Validation | Bayesian optimization and model evaluation |
+| Finish | Export results |
+
+Running all notebook cells reproduces the experiments presented in the manuscript.
+
+---
+
+# Expected Outputs
+
+The notebook generates
+
+- processed taxonomy tables
+- extracted taxonomic hierarchy
+- ambiguity reports
+- feature matrices
+- Incremental PCA models
+- benchmark results
+- trained classifiers
+- evaluation metrics
+- publication-quality figures
+
+---
+
+# Reproducibility
+
+For complete reproducibility, please ensure
+
+- identical Python version
+- identical package versions
+- downloaded Kaggle dataset
+- sequential notebook execution
+
+Random seeds are fixed wherever applicable to ensure deterministic results.
+
+---
+
+# Citation
+
+If you use this repository, please cite our manuscript.
+
+```
+Citation information will be updated after publication.
+```
+
+---
+
+# License
+
+This project is released under the MIT License.
+
+---
+
+# Contact
+
+**Setiawan Tirta**
+
+GitHub
+
+https://github.com/setiawantirta
+
+---
+
+### Reproducibility Statement
+
+This repository contains the complete source code, notebook workflow, preprocessing pipeline, benchmarking framework, and dataset preparation instructions required to reproduce all computational experiments reported in the accompanying manuscript. Every figure, benchmark result, and evaluation presented in the paper can be regenerated directly from this repository using the publicly available datasets and the documented execution workflow.
