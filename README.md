@@ -24,7 +24,7 @@ The objective of this repository is to ensure **full computational reproducibili
 
 ---
 <p align="center">
-  <img src="figures/Graphical Abstract.png" width="900"/>
+  <img src="figures/pipeline.png" width="900"/>
 </p>
 
 <p align="center">
