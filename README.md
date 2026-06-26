@@ -1,10 +1,21 @@
 # SCALR-Tax
+
 ### Scalable Taxonomic Classification using Hypervariable 16S rRNA Regions with Incremental PCA and Bayesian Optimized Machine Learning
+
+**Tirta Setiawan**<sup>1</sup>, **Sarmoko**<sup>2*</sup>, **Nisa Yulianti Suprahman**<sup>2</sup>, **Desdiani**<sup>3</sup>, **Fadilah**<sup>4</sup>
+
+<sup>1</sup> Department of Data Science, Faculty of Science, Institut Teknologi Sumatera, Indonesia  
+<sup>2</sup> Department of Pharmacy, Faculty of Science, Institut Teknologi Sumatera, Indonesia  
+<sup>3</sup> Faculty of Medicine, Institut Pertanian Bogor, Indonesia  
+<sup>4</sup> Faculty of Medicine, Universitas Indonesia, Indonesia
+
+**Corresponding author:** Sarmoko
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-green.svg)]()
 
 ---
+
 ![Pipeline](figures/pipeline.png)
 # Overview
 
