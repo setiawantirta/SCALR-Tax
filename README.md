@@ -23,13 +23,7 @@ This repository provides the complete computational workflow used for scalable m
 The objective of this repository is to ensure **full computational reproducibility** of the experiments reported in the manuscript.
 
 ---
-<p align="center">
-  <img src="figures/pipeline.png" width="900"/>
-</p>
-
-<p align="center">
-<b>Figure 1.</b> Overall workflow of the SCALR-Tax pipeline.
-</p>
+![Pipeline](figures/pipeline.png)
 
 # Repository Structure
 
