@@ -1,0 +1,27 @@
+# Dataset
+
+The complete V3–V4 and V4–V5 hypervariable region datasets are hosted on Kaggle.
+
+Download using:
+
+```bash
+#!/bin/bash
+
+curl -L -o ~/Downloads/v3-v4-hyper-region-filter.zip \
+https://www.kaggle.com/api/v1/datasets/download/indoborutoofficial/v3-v4-hyper-region-filter
+```
+
+or using Kaggle CLI
+
+```bash
+kaggle datasets download \
+indoborutoofficial/v3-v4-hyper-region-filter
+```
+
+Extract the downloaded archive into the project directory:
+
+```
+datasets/
+```
+
+so that the notebook can locate all required input files.
