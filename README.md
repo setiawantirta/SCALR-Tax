@@ -63,6 +63,12 @@ The workflow consists of the following stages:
 
 Each stage is organized into an independent notebook section for easy execution and inspection.
 
+## Benchmark Results
+
+The complete benchmark results for all experimental configurations are available in the following repository:
+
+**📁 [Download Complete Benchmark Results](https://iteraacid-my.sharepoint.com/:f:/g/personal/tirta_setiawan_sd_itera_ac_id/IgAkJANwmV4dTblKLKsV7tuTAZgkmsT7JyXTH4-Ysv5nhDQ?e=IfJ0Nq)**
+
 ---
 
 # Dataset
