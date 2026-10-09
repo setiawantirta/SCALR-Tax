@@ -19,8 +19,6 @@
 ![Pipeline](figures/pipeline.png)
 # Overview
 
-**SCALR-Tax** is the official reproducibility repository accompanying our manuscript submitted to the **Journal of Chemical Information and Modeling (ACS)**.
-
 This repository provides the complete computational workflow used for scalable microbial taxonomic classification from 16S rRNA hypervariable regions. The pipeline integrates
 
 - automatic sequence preprocessing
